@@ -30,3 +30,15 @@ This folder is the client-shareable Streamlit package. It intentionally contains
 6. Add the viewer by email.
 
 Keep `enable_advisor_view = false` for the client-facing share link unless you deliberately add lot-level files back into this package.
+
+## Optional Alpaca market data
+
+The Strategy Lab and Transition Plan can refresh current prices from Alpaca latest bars. This is price-only market data; the app does not place orders, create broker files, or update cost basis.
+
+Configure either Streamlit secrets or environment variables:
+
+- Streamlit secrets: `[alpaca] api_key_id`, `api_secret_key`, `data_feed`, `data_base_url`
+- Streamlit root secrets: `APCA_API_KEY_ID`, `APCA_API_SECRET_KEY`, `ALPACA_DATA_FEED`, `ALPACA_DATA_BASE_URL`
+- Environment variables: `APCA_API_KEY_ID`, `APCA_API_SECRET_KEY`, `ALPACA_DATA_FEED`, `ALPACA_DATA_BASE_URL`
+
+If Alpaca credentials are missing, the request fails, a symbol is unavailable, or the selected feed is not permitted by the subscription, the app continues with manual/uploaded prices.

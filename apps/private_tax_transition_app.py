@@ -8,6 +8,15 @@ import pandas as pd
 import streamlit as st
 
 try:
+    from apps.market_data import (
+        ALPACA_DATA_BASE_URL,
+        ALPACA_SUPPORTED_FEEDS,
+        MarketDataResult,
+        apply_market_prices_to_portfolio,
+        clean_tickers,
+        fetch_alpaca_latest_bars,
+        market_prices_to_frame,
+    )
     from apps.tax_transition_engine import (
         DEFAULT_HEDGE_ASSUMPTIONS,
         DEFAULT_STRATEGY_PRIORITIES,
@@ -19,6 +28,15 @@ try:
         run_transition_analysis,
     )
 except ModuleNotFoundError:
+    from market_data import (
+        ALPACA_DATA_BASE_URL,
+        ALPACA_SUPPORTED_FEEDS,
+        MarketDataResult,
+        apply_market_prices_to_portfolio,
+        clean_tickers,
+        fetch_alpaca_latest_bars,
+        market_prices_to_frame,
+    )
     from tax_transition_engine import (
         DEFAULT_HEDGE_ASSUMPTIONS,
         DEFAULT_STRATEGY_PRIORITIES,
@@ -57,6 +75,82 @@ def safe_secret(section: str, key: str, default: Any = None) -> Any:
     except Exception:
         return default
     return default
+
+
+def safe_root_secret(key: str, default: Any = None) -> Any:
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
+
+def secret_or_env(section: str, key: str, env_name: str, default: Any = None) -> Any:
+    value = os.getenv(env_name)
+    if value not in {None, ""}:
+        return value
+    section_value = safe_secret(section, key, None)
+    if section_value not in {None, ""}:
+        return section_value
+    root_value = safe_root_secret(env_name, None)
+    if root_value not in {None, ""}:
+        return root_value
+    return default
+
+
+def alpaca_credentials() -> tuple[str, str]:
+    api_key_id = str(
+        secret_or_env("alpaca", "api_key_id", "APCA_API_KEY_ID", "")
+        or safe_secret("alpaca", "key_id", "")
+        or safe_secret("alpaca", "api_key", "")
+    ).strip()
+    api_secret_key = str(
+        secret_or_env("alpaca", "api_secret_key", "APCA_API_SECRET_KEY", "")
+        or safe_secret("alpaca", "secret_key", "")
+        or safe_secret("alpaca", "api_secret", "")
+    ).strip()
+    return api_key_id, api_secret_key
+
+
+def alpaca_config() -> dict[str, str]:
+    return {
+        "feed": str(
+            secret_or_env("alpaca", "data_feed", "ALPACA_DATA_FEED", "")
+            or safe_secret("alpaca", "feed", "")
+            or "iex"
+        ).strip().lower(),
+        "base_url": str(
+            os.getenv(
+                "APCA_API_DATA_URL",
+                secret_or_env("alpaca", "data_base_url", "ALPACA_DATA_BASE_URL", ALPACA_DATA_BASE_URL),
+            )
+            or ALPACA_DATA_BASE_URL
+        ).strip(),
+    }
+
+
+def alpaca_credential_fingerprint(api_key_id: str) -> str:
+    if not api_key_id:
+        return "missing"
+    return f"{len(api_key_id)}:{api_key_id[-4:]}"
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def cached_alpaca_latest_bars(
+    tickers: tuple[str, ...],
+    feed: str,
+    base_url: str,
+    credential_fingerprint: str,
+    _api_key_id: str,
+    _api_secret_key: str,
+) -> MarketDataResult:
+    del credential_fingerprint
+    return fetch_alpaca_latest_bars(
+        tickers,
+        _api_key_id,
+        _api_secret_key,
+        feed=feed,
+        base_url=base_url,
+    )
 
 
 def truthy(value: Any) -> bool:
@@ -357,6 +451,7 @@ def sidebar(access: dict[str, str]) -> str:
 
         - No raw Schwab exports are required.
         - Optional simplified portfolio input stays in the Streamlit session.
+        - Optional Alpaca market-data lookup is price-only.
         - No raw broker-export uploads, trade actions, or writebacks.
         - No app-generated trade tickets, broker files, or recommendation downloads.
         - Lot-level table is hidden unless Advisor View is enabled.
@@ -888,6 +983,102 @@ def render_priority_controls(
     return priorities, assumptions, hedge_assumptions
 
 
+def extract_portfolio_tickers(raw_portfolio: pd.DataFrame) -> tuple[str, ...]:
+    if raw_portfolio is None or raw_portfolio.empty:
+        return ()
+    for column in raw_portfolio.columns:
+        normalized = str(column).strip().lower().replace(" ", "_")
+        if normalized in {"ticker", "symbol", "security"}:
+            return clean_tickers(raw_portfolio[column])
+    return ()
+
+
+def render_market_price_source(raw_portfolio: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
+    st.subheader("Market Price Source")
+    source = st.radio(
+        "Current price source",
+        ["Manual / uploaded prices", "Alpaca latest bars"],
+        horizontal=True,
+        key=f"{key_prefix}_market_price_source",
+        help="Alpaca only updates current prices and market values. Cost basis, holding period, tax rates, and target weights remain manual inputs.",
+    )
+    if source == "Manual / uploaded prices":
+        st.caption("Using the prices entered in the table above. This is also the fallback whenever Alpaca is unavailable.")
+        return raw_portfolio
+
+    config = alpaca_config()
+    feed_default = config["feed"] if config["feed"] in ALPACA_SUPPORTED_FEEDS else "iex"
+    c1, c2 = st.columns([1, 2])
+    feed = c1.selectbox(
+        "Alpaca data feed",
+        list(ALPACA_SUPPORTED_FEEDS),
+        index=list(ALPACA_SUPPORTED_FEEDS).index(feed_default),
+        key=f"{key_prefix}_alpaca_feed",
+        help="Feed availability depends on the Alpaca market-data subscription.",
+    )
+    recompute_weights = c2.checkbox(
+        "Recompute current weights from refreshed market values",
+        value=False,
+        key=f"{key_prefix}_alpaca_recompute_weights",
+        help=(
+            "Leave off when the entered current weights are account-level weights from another source. "
+            "Turn on only when the rows represent the whole portfolio denominator you want to analyze."
+        ),
+    )
+
+    tickers = extract_portfolio_tickers(raw_portfolio)
+    if not tickers:
+        st.info("Enter at least one ticker before requesting Alpaca prices. Manual prices remain in use.")
+        return raw_portfolio
+
+    api_key_id, api_secret_key = alpaca_credentials()
+    st.caption(
+        "Alpaca credentials: "
+        + ("configured" if api_key_id and api_secret_key else "not found")
+        + ". Accepted formats: `[alpaca] api_key_id` / `api_secret_key`, or root-level `APCA_API_KEY_ID` / `APCA_API_SECRET_KEY`."
+    )
+    if st.button("Refresh Alpaca prices", key=f"{key_prefix}_alpaca_refresh"):
+        cached_alpaca_latest_bars.clear()
+
+    result = cached_alpaca_latest_bars(
+        tickers,
+        feed,
+        config["base_url"],
+        alpaca_credential_fingerprint(api_key_id),
+        api_key_id,
+        api_secret_key,
+    )
+
+    if result.status == "loaded" and result.fallback_to_manual:
+        st.warning(result.message)
+    elif result.status == "loaded":
+        st.success(result.message)
+    else:
+        st.warning(result.message)
+        return raw_portfolio
+
+    prices_frame = market_prices_to_frame(result.prices)
+    if not prices_frame.empty:
+        render_static_table(
+            prices_frame,
+            ["Ticker", "Price", "Timestamp", "Feed", "Source"],
+            {
+                "Ticker": "Ticker",
+                "Price": "Latest Bar Close",
+                "Timestamp": "Bar Time",
+                "Feed": "Feed",
+                "Source": "Source",
+            },
+            {"Price": lambda x: format_dollars(x, 2)},
+        )
+
+    return apply_market_prices_to_portfolio(
+        raw_portfolio,
+        result.prices,
+        recompute_current_weights=recompute_weights,
+    )
+
+
 def render_portfolio_input(cluster_summary: pd.DataFrame, key_prefix: str, show_help: bool = True) -> pd.DataFrame:
     st.subheader("Portfolio Input")
     sample = build_sample_portfolio_from_cluster_summary(cluster_summary)
@@ -965,7 +1156,7 @@ def render_portfolio_input(cluster_summary: pd.DataFrame, key_prefix: str, show_
                 as decimals such as `0.20` or whole percents such as `20`.
                 """
             )
-    return edited
+    return render_market_price_source(edited, key_prefix)
 
 
 def render_return_data_input(bundled_returns: pd.DataFrame | None = None, key_prefix: str = "returns") -> pd.DataFrame:
