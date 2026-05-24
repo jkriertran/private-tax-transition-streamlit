@@ -26,6 +26,12 @@ try:
         DEFAULT_HEDGE_ASSUMPTIONS,
         DEFAULT_SMA_STUDY_PRIORITIES,
         DEFAULT_STRATEGY_PRIORITIES,
+        build_diy_paper_trading_checklist,
+        build_diy_sma_exposure_budget,
+        build_diy_sma_guardrail_table,
+        build_diy_sma_trade_budget_table,
+        build_diy_sma_warning_flags,
+        build_diy_tax_lot_tracker_template,
         build_sma_due_diligence_checklist,
         build_transition_plan_summary,
         build_sample_portfolio_from_cluster_summary,
@@ -54,6 +60,12 @@ except ModuleNotFoundError:
         DEFAULT_HEDGE_ASSUMPTIONS,
         DEFAULT_SMA_STUDY_PRIORITIES,
         DEFAULT_STRATEGY_PRIORITIES,
+        build_diy_paper_trading_checklist,
+        build_diy_sma_exposure_budget,
+        build_diy_sma_guardrail_table,
+        build_diy_sma_trade_budget_table,
+        build_diy_sma_warning_flags,
+        build_diy_tax_lot_tracker_template,
         build_sma_due_diligence_checklist,
         build_transition_plan_summary,
         build_sample_portfolio_from_cluster_summary,
@@ -1654,6 +1666,256 @@ def render_sma_study_controls(key_prefix: str) -> tuple[dict[str, float], dict[s
     return priorities, hedge_assumptions
 
 
+def render_diy_sma_builder(cluster_summary: pd.DataFrame) -> None:
+    render_strategy_disclaimer()
+    st.subheader("DIY SMA Builder")
+    st.caption(
+        "Define mandate limits, exposure budget, tax-lot tracking, and a paper-trading checklist before any live trading."
+    )
+    st.markdown(
+        """
+        <div class="decision-brief">
+        <strong>Builder purpose:</strong> turn the DIY long/short idea into written guardrails and a paper-trading workflow.<br>
+        <strong>Important:</strong> this screen does not choose securities, place trades, verify borrow, or determine tax treatment.
+        It is a pre-trade control worksheet.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("Portfolio context", expanded=False):
+        raw_portfolio = render_portfolio_input(cluster_summary, "diy_sma", show_help=False)
+    portfolio = normalize_portfolio_frame(raw_portfolio)
+    total_value = float(portfolio["market_value"].sum()) if not portfolio.empty else 1_000_000.0
+    total_gain = float(portfolio["unrealized_gain"].sum()) if not portfolio.empty else 0.0
+    current_weight = float(portfolio["current_weight"].sum()) if not portfolio.empty else 0.0
+    default_restricted = ", ".join(portfolio["ticker"].astype(str).tolist()) if not portfolio.empty else ""
+
+    st.subheader("Mandate Limits")
+    c1, c2, c3, c4 = st.columns(4)
+    sleeve_capital = float(
+        c1.number_input(
+            "Starting sleeve capital",
+            min_value=0.0,
+            value=max(total_value, 100_000.0),
+            step=50_000.0,
+            format="%.0f",
+            key="diy_sma_sleeve_capital",
+        )
+    )
+    target_net = float(
+        c2.slider(
+            "Target net exposure",
+            min_value=0.0,
+            max_value=1.30,
+            value=0.90,
+            step=0.05,
+            key="diy_sma_target_net",
+        )
+    )
+    max_gross = float(
+        c3.slider(
+            "Max gross exposure",
+            min_value=1.00,
+            max_value=2.50,
+            value=1.20,
+            step=0.05,
+            key="diy_sma_max_gross",
+        )
+    )
+    max_short = float(
+        c4.slider(
+            "Max short exposure",
+            min_value=0.0,
+            max_value=0.80,
+            value=0.20,
+            step=0.05,
+            key="diy_sma_max_short",
+        )
+    )
+
+    g1, g2, g3, g4 = st.columns(4)
+    max_single_long = float(
+        g1.slider(
+            "Max single long",
+            min_value=0.0,
+            max_value=0.20,
+            value=0.04,
+            step=0.01,
+            key="diy_sma_single_long",
+        )
+    )
+    max_single_short = float(
+        g2.slider(
+            "Max single short",
+            min_value=0.0,
+            max_value=0.10,
+            value=0.02,
+            step=0.01,
+            key="diy_sma_single_short",
+        )
+    )
+    sector_cap = float(
+        g3.slider(
+            "Sector cap",
+            min_value=0.05,
+            max_value=0.60,
+            value=0.25,
+            step=0.05,
+            key="diy_sma_sector_cap",
+        )
+    )
+    min_loss_harvest = float(
+        g4.number_input(
+            "Min loss harvest",
+            min_value=0.0,
+            value=1000.0,
+            step=500.0,
+            format="%.0f",
+            key="diy_sma_min_loss_harvest",
+        )
+    )
+
+    r1, r2 = st.columns([1, 2])
+    gain_budget = float(
+        r1.number_input(
+            "Annual realized gain budget",
+            min_value=0.0,
+            value=0.0,
+            step=25_000.0,
+            format="%.0f",
+            key="diy_sma_gain_budget",
+        )
+    )
+    restricted_tickers = r2.text_area(
+        "Restricted tickers",
+        value=default_restricted,
+        height=90,
+        help="Include concentrated holdings, close substitutes, employer stock, and any compliance-restricted symbols.",
+        key="diy_sma_restricted_tickers",
+    )
+
+    budget = build_diy_sma_exposure_budget(
+        sleeve_capital,
+        target_net,
+        max_gross,
+        max_short,
+        max_single_long_weight=max_single_long,
+        max_single_short_weight=max_single_short,
+        sector_cap=sector_cap,
+        min_loss_harvest_threshold=min_loss_harvest,
+        annual_realized_gain_budget=gain_budget,
+    )
+
+    st.subheader("Exposure Budget")
+    e1, e2, e3, e4 = st.columns(4)
+    e1.metric("Long budget", format_dollars(budget["long_notional"]))
+    e2.metric("Short budget", format_dollars(budget["short_notional"]))
+    e3.metric("Net exposure", format_pct(budget["actual_net_exposure"]))
+    e4.metric("Gross exposure", format_pct(budget["actual_gross_exposure"]))
+    render_static_table(
+        build_diy_sma_trade_budget_table(budget),
+        ["Sleeve Component", "Budget", "Exposure", "Purpose", "Starting Rule"],
+        {
+            "Sleeve Component": "Sleeve Component",
+            "Budget": "Budget",
+            "Exposure": "Exposure",
+            "Purpose": "Purpose",
+            "Starting Rule": "Starting Rule",
+        },
+        {
+            "Budget": format_dollars,
+            "Exposure": format_pct,
+        },
+    )
+
+    st.subheader("Guardrails and Stop Flags")
+    guardrails = build_diy_sma_guardrail_table(budget, restricted_tickers)
+    render_static_table(
+        guardrails,
+        ["Limit", "Value", "Rule"],
+        {"Limit": "Limit", "Value": "Dollar Limit", "Rule": "Rule"},
+        {"Value": format_dollars},
+    )
+    flags = build_diy_sma_warning_flags(budget, restricted_tickers)
+    render_static_table(
+        flags,
+        ["Severity", "Flag"],
+        {"Severity": "Severity", "Flag": "Flag"},
+    )
+
+    st.subheader("Tax-Lot Tracker")
+    st.caption(
+        "Use this as a paper-trading worksheet. Actual lot records should come from broker data before live implementation."
+    )
+    st.data_editor(
+        build_diy_tax_lot_tracker_template(restricted_tickers),
+        hide_index=True,
+        num_rows="dynamic",
+        width="stretch",
+        column_config={
+            "Side": st.column_config.SelectboxColumn(
+                options=[
+                    "Legacy position",
+                    "Buy replacement long",
+                    "Sell replacement long",
+                    "Short hedge",
+                    "Cover short",
+                    "Harvest sale",
+                ],
+                width="medium",
+            ),
+            "Holding Period": st.column_config.SelectboxColumn(
+                options=["Long Term", "Short Term", "Unknown", "Short"],
+                width="small",
+            ),
+            "Harvest Candidate": st.column_config.SelectboxColumn(
+                options=["No", "Yes", "Review"],
+                width="small",
+            ),
+            "Shares": st.column_config.NumberColumn(format="%.4f"),
+            "Price": st.column_config.NumberColumn(format="$%.2f"),
+            "Notional": st.column_config.NumberColumn(format="$%.0f"),
+            "Cost Basis": st.column_config.NumberColumn(format="$%.0f"),
+            "Current Price": st.column_config.NumberColumn(format="$%.2f"),
+            "Unrealized Gain/Loss": st.column_config.NumberColumn(format="$%.0f"),
+        },
+        key="diy_sma_tax_lot_tracker",
+    )
+
+    st.subheader("Paper-Trading Checklist")
+    checklist = st.data_editor(
+        build_diy_paper_trading_checklist(),
+        hide_index=True,
+        num_rows="dynamic",
+        width="stretch",
+        column_config={
+            "Status": st.column_config.SelectboxColumn(
+                options=["Needed", "In Review", "Complete", "Blocked", "Not Applicable"],
+                width="medium",
+            )
+        },
+        key="diy_sma_paper_checklist",
+    )
+    status_counts = checklist["Status"].value_counts().to_dict() if "Status" in checklist else {}
+    l1, l2, l3, l4 = st.columns(4)
+    l1.metric("Portfolio context value", format_dollars(total_value))
+    l2.metric("Embedded gain context", format_dollars(total_gain))
+    l3.metric("Current concentration", format_pct(current_weight))
+    l4.metric("Checklist complete", f"{status_counts.get('Complete', 0):,}/{len(checklist):,}")
+
+    with st.expander("DIY implementation boundaries", expanded=True):
+        st.markdown(
+            """
+            - Paper trade before live trading.
+            - Do not short a legacy holding or close substitute without tax/legal review.
+            - Do not harvest losses without checking the 30-day before/after wash-sale window.
+            - Do not exceed written net, gross, short, sector, or single-name limits.
+            - Do not treat this worksheet as permission to trade.
+            """
+        )
+
+
 def render_sma_study(
     cluster_summary: pd.DataFrame,
     risk: pd.DataFrame,
@@ -2459,6 +2721,7 @@ def main() -> None:
         "Overview",
         "Strategy Lab",
         "SMA Study",
+        "DIY SMA Builder",
         "Transition Plan",
         "Tax Scenarios",
         "Long/Short Detail",
@@ -2478,6 +2741,8 @@ def main() -> None:
                 render_strategy_lab(cluster_summary, risk, bundled_returns)
             elif label == "SMA Study":
                 render_sma_study(cluster_summary, risk, bundled_returns)
+            elif label == "DIY SMA Builder":
+                render_diy_sma_builder(cluster_summary)
             elif label == "Transition Plan":
                 render_transition_plan_builder(cluster_summary, risk, bundled_returns)
             elif label == "Tax Scenarios":

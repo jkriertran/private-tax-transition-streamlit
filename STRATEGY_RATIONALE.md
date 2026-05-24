@@ -63,6 +63,19 @@ The SMA comparison uses separate criteria from the sale/hold strategy engine: ta
 
 The output is meant to frame manager due diligence, not to select a manager automatically. A balanced diversified SMA may rank highest when the account has large embedded gain and significant excess concentration because it provides a broader implementation path than a single hedge and more tax-loss potential than a conservative direct-indexing sleeve. A conservative design can rank highest when the user's priorities heavily favor tax-rule clarity, simplicity, liquidity, and cost. A hedge-focused overlay can fit near-term concentration control but carries higher constructive-sale, straddle, wash-sale, short-against-the-box, and restricted-list review needs. An aggressive design requires the strongest manager diligence because its high gross exposure can create substantial tracking, borrow, margin, tax, and operational risk.
 
+## DIY SMA Builder Logic
+
+The DIY SMA Builder tab is a pre-trade worksheet for turning an SMA concept into written operating limits. It does not select securities or authorize trades. It asks for sleeve capital, target net exposure, maximum gross exposure, maximum short exposure, single-name limits, sector caps, minimum loss-harvest threshold, annual realized-gain budget, and restricted tickers.
+
+The exposure math uses standard long/short definitions:
+
+- Net exposure equals long notional minus short notional.
+- Gross exposure equals long notional plus short notional.
+- Short budget is capped by both the user-entered short limit and the remaining gross exposure capacity implied by the target net exposure.
+- Long budget is the target net exposure plus the permitted short budget.
+
+The tab then converts those limits into dollar budgets, guardrails, automatic stop/review flags, an editable tax-lot tracker, and a paper-trading checklist. The tax-lot tracker is intentionally a worksheet, not a broker book of record. Before any live implementation, actual tax lots, wash-sale windows, constructive-sale or straddle exposure, short-borrow terms, margin rules, and restricted-list issues should be reviewed with qualified professionals.
+
 ## Scenario and Assumption Controls
 
 The Strategy Lab exposes user-adjustable priority weights, gradual-sale horizon, decision horizon, available loss offsets, charitable-intent flag, annual borrow/carry cost, liquidity requirement, and tax-complexity tolerance.

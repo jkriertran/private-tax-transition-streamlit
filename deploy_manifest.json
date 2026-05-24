@@ -87,13 +87,13 @@
     },
     {
       "path": "apps/private_tax_transition_app.py",
-      "size_bytes": 98195,
-      "sha256": "5f5577fecbe142c777de402791a1bc716e8a6652719fd55f69ca80db7231bd1c"
+      "size_bytes": 107467,
+      "sha256": "2b20b05274c1c224c6ca218bd06e72560badcb345f60d7dad483f9256163a5cc"
     },
     {
       "path": "apps/tax_transition_engine.py",
-      "size_bytes": 97398,
-      "sha256": "9d7d166619123e8fbdf059c06301be2a33ac4fbb0c7cdfcaaa5e317212a27955"
+      "size_bytes": 109747,
+      "sha256": "c9198a4cc4ac92ae9fc6fcd9784f97598af0de85d5f5fb72f56b1f6463faa88a"
     },
     {
       "path": "apps/market_data.py",
@@ -102,8 +102,8 @@
     },
     {
       "path": "STRATEGY_RATIONALE.md",
-      "size_bytes": 9683,
-      "sha256": "94aae160327b52823a195e0e9477d14ae61736803db8827b3c183ac0bac2e755"
+      "size_bytes": 10927,
+      "sha256": "192583f0c1cfac38e966efa0c04c4b75db50f576115ed28b2030e97ae761e84f"
     },
     {
       "path": "requirements.txt",

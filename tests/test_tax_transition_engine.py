@@ -8,6 +8,11 @@ from apps.tax_transition_engine import (
     MULTI_PROXY_HEDGE_LABEL,
     allocate_loss_offsets,
     build_sma_due_diligence_checklist,
+    build_diy_paper_trading_checklist,
+    build_diy_sma_exposure_budget,
+    build_diy_sma_trade_budget_table,
+    build_diy_sma_warning_flags,
+    build_diy_tax_lot_tracker_template,
     build_transition_plan_summary,
     build_sensitivity_tables,
     analyze_long_short_candidates,
@@ -490,6 +495,49 @@ class TaxTransitionEngineTests(unittest.TestCase):
         self.assertIn("wash", text)
         self.assertIn("form adv", text)
         self.assertGreaterEqual(len(checklist), 5)
+
+    def test_diy_sma_exposure_budget_respects_gross_and_short_caps(self) -> None:
+        budget = build_diy_sma_exposure_budget(
+            sleeve_capital=1_000_000,
+            target_net_exposure=0.90,
+            max_gross_exposure=1.20,
+            max_short_exposure=0.20,
+        )
+
+        self.assertAlmostEqual(budget["short_notional"], 150_000)
+        self.assertAlmostEqual(budget["long_notional"], 1_050_000)
+        self.assertAlmostEqual(budget["actual_net_exposure"], 0.90)
+        self.assertAlmostEqual(budget["actual_gross_exposure"], 1.20)
+        self.assertLessEqual(budget["actual_short_exposure"], 0.20)
+
+        percent_style_budget = build_diy_sma_exposure_budget(
+            sleeve_capital=1_000_000,
+            target_net_exposure=90,
+            max_gross_exposure=120,
+            max_short_exposure=20,
+        )
+        self.assertAlmostEqual(percent_style_budget["actual_net_exposure"], 0.90)
+        self.assertAlmostEqual(percent_style_budget["actual_gross_exposure"], 1.20)
+
+    def test_diy_sma_tables_include_trade_budget_flags_and_lot_tracking(self) -> None:
+        budget = build_diy_sma_exposure_budget(
+            sleeve_capital=500_000,
+            target_net_exposure=0.90,
+            max_gross_exposure=1.10,
+            max_short_exposure=0.30,
+            annual_realized_gain_budget=0,
+        )
+
+        trade_budget = build_diy_sma_trade_budget_table(budget)
+        flags = build_diy_sma_warning_flags(budget, restricted_tickers="")
+        tracker = build_diy_tax_lot_tracker_template("SNDK,WDC")
+        checklist = build_diy_paper_trading_checklist()
+
+        self.assertIn("Replacement long book", set(trade_budget["Sleeve Component"]))
+        self.assertTrue(flags["Flag"].str.contains("Restricted ticker list").any())
+        self.assertEqual(tracker.loc[0, "Ticker"], "SNDK")
+        self.assertIn("Wash-Sale Window Start", tracker.columns)
+        self.assertTrue(checklist["Checklist Item"].str.contains("30-60 days").any())
 
 
 if __name__ == "__main__":

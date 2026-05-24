@@ -230,6 +230,16 @@ def _coerce_decimal(value: Any, default: float = 0.0) -> float:
     return number
 
 
+def _coerce_leverage_decimal(value: Any, default: float = 0.0) -> float:
+    """Coerce exposure inputs where 1.20 means 120% and 120 means 120%."""
+    if isinstance(value, str) and "%" in value:
+        return _coerce_float(value, default) / 100.0
+    number = _coerce_float(value, default)
+    if abs(number) > 10.0:
+        return number / 100.0
+    return number
+
+
 def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
     return max(low, min(high, value))
 
@@ -1947,6 +1957,261 @@ def build_sma_due_diligence_checklist(selected_design: str | None = None) -> pd.
             "Review Area": "Implementation gates",
             "Question": "Who can approve launch, tax budget changes, restricted-list exceptions, and hedge exposure changes?",
             "Evidence Needed": "Written approval workflow, stop-loss/stop-review rules, named owner for tax/legal signoff.",
+        },
+    ]
+    return pd.DataFrame(rows)
+
+
+def build_diy_sma_exposure_budget(
+    sleeve_capital: float,
+    target_net_exposure: float,
+    max_gross_exposure: float,
+    max_short_exposure: float,
+    *,
+    max_single_long_weight: float = 0.04,
+    max_single_short_weight: float = 0.02,
+    sector_cap: float = 0.25,
+    min_loss_harvest_threshold: float = 1000.0,
+    annual_realized_gain_budget: float = 0.0,
+) -> dict[str, float]:
+    """Translate DIY SMA limits into dollar budgets.
+
+    For a long/short book, net exposure equals long notional minus short
+    notional. Gross exposure equals long notional plus short notional. The
+    short budget is capped by both the user's max short limit and the gross
+    exposure limit implied by the target net exposure.
+    """
+    capital = max(_coerce_float(sleeve_capital), 0.0)
+    target_net = _clamp(_coerce_leverage_decimal(target_net_exposure), 0.0, 2.0)
+    max_gross = max(_coerce_leverage_decimal(max_gross_exposure), target_net)
+    max_short = _clamp(_coerce_decimal(max_short_exposure), 0.0, 1.5)
+
+    short_cap_by_gross = max((max_gross - target_net) * capital / 2.0, 0.0)
+    short_cap_by_policy = max_short * capital
+    short_notional = min(short_cap_by_gross, short_cap_by_policy)
+    long_notional = target_net * capital + short_notional
+    gross_notional = long_notional + short_notional
+    net_notional = long_notional - short_notional
+    gross_capacity_remaining = max(max_gross * capital - gross_notional, 0.0)
+
+    return {
+        "sleeve_capital": capital,
+        "target_net_exposure": target_net,
+        "max_gross_exposure": max_gross,
+        "max_short_exposure": max_short,
+        "long_notional": long_notional,
+        "short_notional": short_notional,
+        "net_notional": net_notional,
+        "gross_notional": gross_notional,
+        "actual_net_exposure": net_notional / capital if capital else 0.0,
+        "actual_gross_exposure": gross_notional / capital if capital else 0.0,
+        "actual_short_exposure": short_notional / capital if capital else 0.0,
+        "gross_capacity_remaining": gross_capacity_remaining,
+        "max_single_long_dollars": capital * _clamp(_coerce_decimal(max_single_long_weight), 0.0, 1.0),
+        "max_single_short_dollars": capital * _clamp(_coerce_decimal(max_single_short_weight), 0.0, 1.0),
+        "sector_cap_dollars": capital * _clamp(_coerce_decimal(sector_cap), 0.0, 1.0),
+        "min_loss_harvest_threshold": max(_coerce_float(min_loss_harvest_threshold), 0.0),
+        "annual_realized_gain_budget": max(_coerce_float(annual_realized_gain_budget), 0.0),
+    }
+
+
+def build_diy_sma_trade_budget_table(budget: dict[str, float]) -> pd.DataFrame:
+    capital = _coerce_float(budget.get("sleeve_capital"))
+    rows = [
+        {
+            "Sleeve Component": "Replacement long book",
+            "Budget": _coerce_float(budget.get("long_notional")),
+            "Exposure": _coerce_float(budget.get("long_notional")) / capital if capital else 0.0,
+            "Purpose": "Hold diversified equity exposure while avoiding restricted/overlap names.",
+            "Starting Rule": "Use a broad ETF, direct-index basket, or manager model only after restricted-list review.",
+        },
+        {
+            "Sleeve Component": "Short hedge book",
+            "Budget": _coerce_float(budget.get("short_notional")),
+            "Exposure": _coerce_float(budget.get("actual_short_exposure")),
+            "Purpose": "Offset part of market, sector, or factor exposure; create a controlled short sleeve.",
+            "Starting Rule": "Begin with broad/sector hedges in paper trading; avoid single-name shorts until tax/legal review.",
+        },
+        {
+            "Sleeve Component": "Net equity exposure",
+            "Budget": _coerce_float(budget.get("net_notional")),
+            "Exposure": _coerce_float(budget.get("actual_net_exposure")),
+            "Purpose": "Target invested equity exposure after shorts.",
+            "Starting Rule": "Keep net exposure inside written mandate limits every day.",
+        },
+        {
+            "Sleeve Component": "Gross exposure",
+            "Budget": _coerce_float(budget.get("gross_notional")),
+            "Exposure": _coerce_float(budget.get("actual_gross_exposure")),
+            "Purpose": "Measure leverage and operational burden from longs plus shorts.",
+            "Starting Rule": "Stop adding trades if gross exposure exceeds the approved cap.",
+        },
+        {
+            "Sleeve Component": "Unused gross capacity",
+            "Budget": _coerce_float(budget.get("gross_capacity_remaining")),
+            "Exposure": _coerce_float(budget.get("gross_capacity_remaining")) / capital if capital else 0.0,
+            "Purpose": "Reserve for drift, margin, and implementation slippage.",
+            "Starting Rule": "Do not treat unused capacity as permission to add risk without review.",
+        },
+    ]
+    return pd.DataFrame(rows)
+
+
+def build_diy_sma_guardrail_table(budget: dict[str, float], restricted_tickers: Any = None) -> pd.DataFrame:
+    restricted = ", ".join(clean for clean in [str(t).strip().upper() for t in str(restricted_tickers or "").replace("\n", ",").split(",")] if clean)
+    rows = [
+        {
+            "Limit": "Max single long",
+            "Value": _coerce_float(budget.get("max_single_long_dollars")),
+            "Rule": "No one replacement long should dominate the sleeve.",
+        },
+        {
+            "Limit": "Max single short",
+            "Value": _coerce_float(budget.get("max_single_short_dollars")),
+            "Rule": "Avoid concentrated single-name short risk in a DIY implementation.",
+        },
+        {
+            "Limit": "Sector cap",
+            "Value": _coerce_float(budget.get("sector_cap_dollars")),
+            "Rule": "Avoid recreating the same sector concentration inside the replacement book.",
+        },
+        {
+            "Limit": "Minimum loss harvest",
+            "Value": _coerce_float(budget.get("min_loss_harvest_threshold")),
+            "Rule": "Do not harvest tiny losses that are not worth tax, spread, and wash-sale complexity.",
+        },
+        {
+            "Limit": "Annual realized gain budget",
+            "Value": _coerce_float(budget.get("annual_realized_gain_budget")),
+            "Rule": "Stop and review before realized gains exceed the approved tax budget.",
+        },
+        {
+            "Limit": "Restricted tickers",
+            "Value": 0.0,
+            "Rule": restricted or "Add concentrated holdings, close substitutes, employer stock, and any compliance-restricted tickers.",
+        },
+    ]
+    return pd.DataFrame(rows)
+
+
+def build_diy_sma_warning_flags(budget: dict[str, float], restricted_tickers: Any = None) -> pd.DataFrame:
+    flags: list[dict[str, str]] = []
+    if _coerce_float(budget.get("sleeve_capital")) <= 0:
+        flags.append({"Severity": "Stop", "Flag": "Sleeve capital must be greater than zero before planning trades."})
+    if _coerce_float(budget.get("actual_gross_exposure")) > _coerce_float(budget.get("max_gross_exposure")) + 0.0001:
+        flags.append({"Severity": "Stop", "Flag": "Gross exposure exceeds the written mandate."})
+    if _coerce_float(budget.get("actual_short_exposure")) > 0.30:
+        flags.append({"Severity": "Review", "Flag": "Short exposure is above 30%; DIY implementation risk is elevated."})
+    if _coerce_float(budget.get("annual_realized_gain_budget")) <= 0:
+        flags.append({"Severity": "Review", "Flag": "No annual realized-gain budget is set."})
+    restricted = str(restricted_tickers or "").strip()
+    if not restricted:
+        flags.append({"Severity": "Review", "Flag": "Restricted ticker list is empty."})
+    if not flags:
+        flags.append({"Severity": "OK", "Flag": "No automatic mandate flags triggered. Professional review is still required."})
+    return pd.DataFrame(flags)
+
+
+def build_diy_tax_lot_tracker_template(restricted_tickers: Any = None) -> pd.DataFrame:
+    restricted = [ticker.strip().upper() for ticker in str(restricted_tickers or "").replace("\n", ",").split(",") if ticker.strip()]
+    first_restricted = restricted[0] if restricted else ""
+    return pd.DataFrame(
+        [
+            {
+                "Trade Date": "",
+                "Ticker": first_restricted,
+                "Side": "Legacy position",
+                "Shares": 0.0,
+                "Price": 0.0,
+                "Notional": 0.0,
+                "Open Date": "",
+                "Cost Basis": 0.0,
+                "Current Price": 0.0,
+                "Unrealized Gain/Loss": 0.0,
+                "Holding Period": "Unknown",
+                "Replacement Candidate": "",
+                "Wash-Sale Window Start": "",
+                "Wash-Sale Window End": "",
+                "Harvest Candidate": "No",
+                "Review Notes": "Track legacy lots separately from replacement SMA lots.",
+            },
+            {
+                "Trade Date": "",
+                "Ticker": "",
+                "Side": "Buy replacement long",
+                "Shares": 0.0,
+                "Price": 0.0,
+                "Notional": 0.0,
+                "Open Date": "",
+                "Cost Basis": 0.0,
+                "Current Price": 0.0,
+                "Unrealized Gain/Loss": 0.0,
+                "Holding Period": "Unknown",
+                "Replacement Candidate": "",
+                "Wash-Sale Window Start": "",
+                "Wash-Sale Window End": "",
+                "Harvest Candidate": "No",
+                "Review Notes": "Do not buy restricted or substantially identical exposure without review.",
+            },
+            {
+                "Trade Date": "",
+                "Ticker": "",
+                "Side": "Short hedge",
+                "Shares": 0.0,
+                "Price": 0.0,
+                "Notional": 0.0,
+                "Open Date": "",
+                "Cost Basis": 0.0,
+                "Current Price": 0.0,
+                "Unrealized Gain/Loss": 0.0,
+                "Holding Period": "Short",
+                "Replacement Candidate": "",
+                "Wash-Sale Window Start": "",
+                "Wash-Sale Window End": "",
+                "Harvest Candidate": "No",
+                "Review Notes": "Confirm borrow, margin, constructive-sale, straddle, and short-sale rules.",
+            },
+        ]
+    )
+
+
+def build_diy_paper_trading_checklist() -> pd.DataFrame:
+    rows = [
+        {
+            "Phase": "Before paper trading",
+            "Checklist Item": "Write mandate limits for net, gross, short, sector, and single-name exposure.",
+            "Owner": "Investor / advisor",
+            "Status": "Needed",
+        },
+        {
+            "Phase": "Before paper trading",
+            "Checklist Item": "Create restricted list covering legacy holdings, close substitutes, employer stock, and compliance restrictions.",
+            "Owner": "Investor / CPA / counsel",
+            "Status": "Needed",
+        },
+        {
+            "Phase": "Paper trading",
+            "Checklist Item": "Simulate every buy, short, cover, sale, and loss harvest for at least 30-60 days.",
+            "Owner": "Investor",
+            "Status": "Needed",
+        },
+        {
+            "Phase": "Paper trading",
+            "Checklist Item": "Track daily net exposure, gross exposure, sector exposure, borrow cost, and tracking error.",
+            "Owner": "Investor",
+            "Status": "Needed",
+        },
+        {
+            "Phase": "Tax review",
+            "Checklist Item": "Review wash-sale windows, straddles, constructive-sale risk, holding-period effects, and loss usability.",
+            "Owner": "CPA / tax counsel",
+            "Status": "Needed",
+        },
+        {
+            "Phase": "Launch gate",
+            "Checklist Item": "Do not place live trades until tax/legal review, risk limits, and stop-review rules are documented.",
+            "Owner": "Investor / advisor",
+            "Status": "Needed",
         },
     ]
     return pd.DataFrame(rows)
