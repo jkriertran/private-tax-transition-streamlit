@@ -10,6 +10,8 @@ from apps.market_data import (
     apply_market_prices_to_portfolio,
     clean_tickers,
     fetch_alpaca_latest_bars,
+    fetch_alpaca_historical_bars,
+    market_data_qa_frame,
 )
 
 
@@ -114,6 +116,76 @@ class MarketDataTests(unittest.TestCase):
 
         self.assertAlmostEqual(updated.loc[0, "Current Weight"], 0.75)
         self.assertAlmostEqual(updated.loc[1, "Current Weight"], 0.25)
+
+    def test_fetch_alpaca_historical_bars_parses_paginated_returns(self) -> None:
+        calls = []
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            calls.append(request.full_url)
+            if "page_token=next-token" in request.full_url:
+                return FakeResponse(
+                    b'{"bars":{"WDC":[{"c":84.0,"t":"2026-01-02T05:00:00Z"},{"c":82.0,"t":"2026-01-03T05:00:00Z"}]}}'
+                )
+            return FakeResponse(
+                b'{"bars":{"SNDK":[{"c":70.0,"t":"2026-01-01T05:00:00Z"},{"c":77.0,"t":"2026-01-02T05:00:00Z"}],"WDC":[{"c":80.0,"t":"2026-01-01T05:00:00Z"}]},"next_page_token":"next-token"}'
+            )
+
+        result = fetch_alpaca_historical_bars(
+            ["SNDK", "WDC"],
+            "key-id",
+            "secret",
+            start="2026-01-01",
+            end="2026-01-03",
+            feed="iex",
+            urlopen_func=fake_urlopen,
+        )
+
+        self.assertEqual(result.status, "loaded")
+        self.assertEqual(result.page_count, 2)
+        self.assertEqual(result.missing_tickers, ())
+        self.assertIn("timeframe=1Day", calls[0])
+        sndk_return = result.returns[result.returns["ticker"] == "SNDK"].iloc[0]["return"]
+        wdc_returns = result.returns[result.returns["ticker"] == "WDC"]["return"].tolist()
+        self.assertAlmostEqual(sndk_return, 0.10)
+        self.assertAlmostEqual(wdc_returns[0], 0.05)
+        self.assertAlmostEqual(wdc_returns[1], -2.0 / 84.0)
+
+    def test_fetch_alpaca_historical_missing_credentials_returns_fallback(self) -> None:
+        result = fetch_alpaca_historical_bars(["SNDK"], "", "", urlopen_func=lambda *_args, **_kwargs: None)
+
+        self.assertEqual(result.status, "manual_fallback")
+        self.assertTrue(result.returns.empty)
+        self.assertEqual(result.missing_tickers, ("SNDK",))
+        self.assertIn("credentials", result.message.lower())
+
+    def test_market_data_qa_frame_summarizes_latest_and_history(self) -> None:
+        latest = fetch_alpaca_latest_bars(
+            ["SNDK", "MISSING"],
+            "key-id",
+            "secret",
+            urlopen_func=lambda _request, timeout: FakeResponse(
+                b'{"bars":{"SNDK":{"c":72.5,"t":"2026-01-03T20:00:00Z"}}}'
+            ),
+        )
+        history = fetch_alpaca_historical_bars(
+            ["SNDK"],
+            "key-id",
+            "secret",
+            start="2026-01-01",
+            end="2026-01-03",
+            urlopen_func=lambda _request, timeout: FakeResponse(
+                b'{"bars":{"SNDK":[{"c":70.0,"t":"2026-01-01T05:00:00Z"},{"c":77.0,"t":"2026-01-02T05:00:00Z"}]}}'
+            ),
+        )
+
+        qa = market_data_qa_frame(latest_result=latest, historical_result=history)
+
+        self.assertIn("Latest price", set(qa["Dataset"]))
+        self.assertIn("Historical bars", set(qa["Dataset"]))
+        self.assertIn("MISSING", set(qa["Ticker"]))
+        sndk_history = qa[(qa["Dataset"] == "Historical bars") & (qa["Ticker"] == "SNDK")].iloc[0]
+        self.assertEqual(sndk_history["Rows"], 2)
 
 
 if __name__ == "__main__":

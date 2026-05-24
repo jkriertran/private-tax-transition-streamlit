@@ -33,7 +33,7 @@ Keep `enable_advisor_view = false` for the client-facing share link unless you d
 
 ## Optional Alpaca market data
 
-The Strategy Lab and Transition Plan can refresh current prices from Alpaca latest bars. This is price-only market data; the app does not place orders, create broker files, or update cost basis.
+The Strategy Lab and Transition Plan can refresh current prices from Alpaca latest bars and can use Alpaca historical daily bars for hedge/regime return analysis. This is read-only market data; the app does not place orders, create broker files, or update cost basis.
 
 Configure either Streamlit secrets or environment variables:
 
@@ -41,4 +41,4 @@ Configure either Streamlit secrets or environment variables:
 - Streamlit root secrets: `APCA_API_KEY_ID`, `APCA_API_SECRET_KEY`, `ALPACA_DATA_FEED`, `ALPACA_DATA_BASE_URL`
 - Environment variables: `APCA_API_KEY_ID`, `APCA_API_SECRET_KEY`, `ALPACA_DATA_FEED`, `ALPACA_DATA_BASE_URL`
 
-If Alpaca credentials are missing, the request fails, a symbol is unavailable, or the selected feed is not permitted by the subscription, the app continues with manual/uploaded prices.
+If Alpaca credentials are missing, the request fails, a symbol is unavailable, or the selected feed is not permitted by the subscription, the app continues with manual/uploaded prices and uploaded/bundled returns.

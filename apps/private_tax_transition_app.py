@@ -10,11 +10,16 @@ import streamlit as st
 try:
     from apps.market_data import (
         ALPACA_DATA_BASE_URL,
+        ALPACA_HISTORICAL_FEEDS,
         ALPACA_SUPPORTED_FEEDS,
+        HistoricalBarsResult,
         MarketDataResult,
         apply_market_prices_to_portfolio,
         clean_tickers,
+        default_history_window,
+        fetch_alpaca_historical_bars,
         fetch_alpaca_latest_bars,
+        market_data_qa_frame,
         market_prices_to_frame,
     )
     from apps.tax_transition_engine import (
@@ -30,11 +35,16 @@ try:
 except ModuleNotFoundError:
     from market_data import (
         ALPACA_DATA_BASE_URL,
+        ALPACA_HISTORICAL_FEEDS,
         ALPACA_SUPPORTED_FEEDS,
+        HistoricalBarsResult,
         MarketDataResult,
         apply_market_prices_to_portfolio,
         clean_tickers,
+        default_history_window,
+        fetch_alpaca_historical_bars,
         fetch_alpaca_latest_bars,
+        market_data_qa_frame,
         market_prices_to_frame,
     )
     from tax_transition_engine import (
@@ -149,6 +159,31 @@ def cached_alpaca_latest_bars(
         _api_key_id,
         _api_secret_key,
         feed=feed,
+        base_url=base_url,
+    )
+
+
+@st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
+def cached_alpaca_historical_bars(
+    tickers: tuple[str, ...],
+    start: str,
+    end: str,
+    feed: str,
+    adjustment: str,
+    base_url: str,
+    credential_fingerprint: str,
+    _api_key_id: str,
+    _api_secret_key: str,
+) -> HistoricalBarsResult:
+    del credential_fingerprint
+    return fetch_alpaca_historical_bars(
+        tickers,
+        _api_key_id,
+        _api_secret_key,
+        start=start,
+        end=end,
+        feed=feed,
+        adjustment=adjustment,
         base_url=base_url,
     )
 
@@ -451,7 +486,7 @@ def sidebar(access: dict[str, str]) -> str:
 
         - No raw Schwab exports are required.
         - Optional simplified portfolio input stays in the Streamlit session.
-        - Optional Alpaca market-data lookup is price-only.
+        - Optional Alpaca market-data lookup is read-only and data-only.
         - No raw broker-export uploads, trade actions, or writebacks.
         - No app-generated trade tickets, broker files, or recommendation downloads.
         - Lot-level table is hidden unless Advisor View is enabled.
@@ -983,6 +1018,32 @@ def render_priority_controls(
     return priorities, assumptions, hedge_assumptions
 
 
+def render_market_data_qa(qa: pd.DataFrame) -> None:
+    if qa is None or qa.empty:
+        return
+    view = qa.copy()
+    for column in ["Start", "End"]:
+        if column in view:
+            view[column] = view[column].map(
+                lambda value: value.strftime("%Y-%m-%d") if hasattr(value, "strftime") else str(value or "")
+            )
+    render_static_table(
+        view,
+        ["Dataset", "Ticker", "Rows", "Start", "End", "Feed", "Source", "Status"],
+        {
+            "Dataset": "Dataset",
+            "Ticker": "Ticker",
+            "Rows": "Rows",
+            "Start": "Start",
+            "End": "End",
+            "Feed": "Feed",
+            "Source": "Source",
+            "Status": "Status",
+        },
+        {"Rows": lambda x: format_number(x, 0)},
+    )
+
+
 def extract_portfolio_tickers(raw_portfolio: pd.DataFrame) -> tuple[str, ...]:
     if raw_portfolio is None or raw_portfolio.empty:
         return ()
@@ -991,6 +1052,15 @@ def extract_portfolio_tickers(raw_portfolio: pd.DataFrame) -> tuple[str, ...]:
         if normalized in {"ticker", "symbol", "security"}:
             return clean_tickers(raw_portfolio[column])
     return ()
+
+
+def return_universe_from_portfolio(raw_portfolio: pd.DataFrame, risk: pd.DataFrame | None = None) -> tuple[str, ...]:
+    tickers = set(extract_portfolio_tickers(raw_portfolio))
+    if risk is not None and not risk.empty and {"target", "proxy"}.issubset(risk.columns):
+        portfolio_tickers = {ticker.upper() for ticker in tickers}
+        risk_rows = risk[risk["target"].astype(str).str.upper().isin(portfolio_tickers)]
+        tickers.update(clean_tickers(risk_rows["proxy"]))
+    return clean_tickers(tickers)
 
 
 def render_market_price_source(raw_portfolio: pd.DataFrame, key_prefix: str) -> pd.DataFrame:
@@ -1071,6 +1141,10 @@ def render_market_price_source(raw_portfolio: pd.DataFrame, key_prefix: str) -> 
             },
             {"Price": lambda x: format_dollars(x, 2)},
         )
+    qa = market_data_qa_frame(latest_result=result)
+    if not qa.empty:
+        with st.expander("Latest price QA", expanded=False):
+            render_market_data_qa(qa)
 
     return apply_market_prices_to_portfolio(
         raw_portfolio,
@@ -1159,30 +1233,110 @@ def render_portfolio_input(cluster_summary: pd.DataFrame, key_prefix: str, show_
     return render_market_price_source(edited, key_prefix)
 
 
-def render_return_data_input(bundled_returns: pd.DataFrame | None = None, key_prefix: str = "returns") -> pd.DataFrame:
+def render_return_data_input(
+    bundled_returns: pd.DataFrame | None = None,
+    key_prefix: str = "returns",
+    alpaca_tickers: tuple[str, ...] | None = None,
+) -> pd.DataFrame:
     st.subheader("Daily Return Data")
-    uploaded = st.file_uploader(
-        "Optional daily returns or prices CSV",
-        type=["csv"],
-        help="Accepted formats: long date/ticker/return, long date/ticker/price, or wide date plus one ticker column each.",
-        key=f"{key_prefix}_daily_returns_upload",
+    source = st.radio(
+        "Return data source",
+        ["Upload / bundled returns", "Alpaca historical bars"],
+        horizontal=True,
+        key=f"{key_prefix}_return_data_source",
+        help="Daily returns drive hedge beta, correlation, drawdown, and regime analysis when available.",
     )
-    if uploaded is not None:
-        raw_returns = pd.read_csv(uploaded)
-    elif bundled_returns is not None and not bundled_returns.empty:
-        raw_returns = bundled_returns
-    else:
-        raw_returns = pd.DataFrame()
 
-    returns = normalize_return_frame(raw_returns)
-    if returns.empty:
-        st.info("No daily return file is loaded. Hedge and regime results will use the existing summary proxy evidence.")
+    fallback_returns = normalize_return_frame(bundled_returns)
+    if source == "Upload / bundled returns":
+        uploaded = st.file_uploader(
+            "Optional daily returns or prices CSV",
+            type=["csv"],
+            help="Accepted formats: long date/ticker/return, long date/ticker/price, or wide date plus one ticker column each.",
+            key=f"{key_prefix}_daily_returns_upload",
+        )
+        if uploaded is not None:
+            raw_returns = pd.read_csv(uploaded)
+        elif bundled_returns is not None and not bundled_returns.empty:
+            raw_returns = bundled_returns
+        else:
+            raw_returns = pd.DataFrame()
+
+        returns = normalize_return_frame(raw_returns)
+        if returns.empty:
+            st.info("No daily return file is loaded. Hedge and regime results will use the existing summary proxy evidence.")
+        else:
+            start = returns["date"].min().date()
+            end = returns["date"].max().date()
+            tickers = returns["ticker"].nunique()
+            st.caption(f"Loaded {len(returns):,} return rows for {tickers:,} tickers from {start} to {end}.")
+        return returns
+
+    config = alpaca_config()
+    api_key_id, api_secret_key = alpaca_credentials()
+    tickers = clean_tickers(alpaca_tickers or ())
+    default_start, default_end = default_history_window(3)
+    c1, c2, c3, c4 = st.columns(4)
+    start_date = c1.date_input("History start", value=default_start, key=f"{key_prefix}_alpaca_history_start")
+    end_date = c2.date_input("History end", value=default_end, key=f"{key_prefix}_alpaca_history_end")
+    feed_default = config["feed"] if config["feed"] in ALPACA_HISTORICAL_FEEDS else "iex"
+    feed = c3.selectbox(
+        "History feed",
+        list(ALPACA_HISTORICAL_FEEDS),
+        index=list(ALPACA_HISTORICAL_FEEDS).index(feed_default),
+        key=f"{key_prefix}_alpaca_history_feed",
+        help="Historical bars currently use Alpaca's historical-bar feeds. Use IEX first if SIP is not enabled.",
+    )
+    adjustment = c4.selectbox(
+        "Adjustment",
+        ["all", "split", "raw", "dividend"],
+        index=0,
+        key=f"{key_prefix}_alpaca_history_adjustment",
+        help="Adjusted bars reduce artificial return jumps from splits, dividends, and similar corporate actions.",
+    )
+
+    st.caption(
+        "Alpaca credentials: "
+        + ("configured" if api_key_id and api_secret_key else "not found")
+        + f". Return universe includes {len(tickers):,} portfolio/proxy tickers."
+    )
+    if not tickers:
+        st.info("No tickers are available for Alpaca history. Add portfolio tickers first.")
+        return fallback_returns
+    if start_date >= end_date:
+        st.warning("History start must be before history end. Using uploaded or bundled returns for now.")
+        return fallback_returns
+    if st.button("Refresh Alpaca return history", key=f"{key_prefix}_alpaca_history_refresh"):
+        cached_alpaca_historical_bars.clear()
+
+    result = cached_alpaca_historical_bars(
+        tickers,
+        start_date.isoformat(),
+        end_date.isoformat(),
+        feed,
+        adjustment,
+        config["base_url"],
+        alpaca_credential_fingerprint(api_key_id),
+        api_key_id,
+        api_secret_key,
+    )
+
+    if result.status == "loaded" and result.fallback_to_manual:
+        st.warning(result.message)
+    elif result.status == "loaded":
+        st.success(result.message)
     else:
-        start = returns["date"].min().date()
-        end = returns["date"].max().date()
-        tickers = returns["ticker"].nunique()
-        st.caption(f"Loaded {len(returns):,} return rows for {tickers:,} tickers from {start} to {end}.")
-    return returns
+        st.warning(result.message)
+        return fallback_returns
+
+    qa = market_data_qa_frame(historical_result=result)
+    if not qa.empty:
+        with st.expander("Historical return QA", expanded=True):
+            render_market_data_qa(qa)
+            st.caption(
+                "Rows are historical bars by ticker. Daily returns are computed from close-to-close percentage changes."
+            )
+    return result.returns
 
 
 def render_sensitivity_tables(sensitivity_tables: dict[str, pd.DataFrame]) -> None:
@@ -1464,7 +1618,11 @@ def render_strategy_lab(cluster_summary: pd.DataFrame, risk: pd.DataFrame, bundl
     with st.expander("Portfolio input", expanded=False):
         raw_portfolio = render_portfolio_input(cluster_summary, "strategy_lab", show_help=False)
     with st.expander("Optional daily return data", expanded=False):
-        daily_returns = render_return_data_input(bundled_returns, "strategy_lab")
+        daily_returns = render_return_data_input(
+            bundled_returns,
+            "strategy_lab",
+            return_universe_from_portfolio(raw_portfolio, risk),
+        )
     normalized_preview = normalize_portfolio_frame(raw_portfolio)
 
     if normalized_preview.empty:
@@ -1743,7 +1901,11 @@ def render_transition_plan_builder(
     with st.expander("Portfolio input used for this plan", expanded=False):
         raw_portfolio = render_portfolio_input(cluster_summary, "transition_plan", show_help=False)
     with st.expander("Optional return data used for hedge research", expanded=False):
-        daily_returns = render_return_data_input(bundled_returns, "transition_plan")
+        daily_returns = render_return_data_input(
+            bundled_returns,
+            "transition_plan",
+            return_universe_from_portfolio(raw_portfolio, risk),
+        )
     if normalize_portfolio_frame(raw_portfolio).empty:
         st.warning("Enter at least one ticker with a market value or shares and price.")
         return

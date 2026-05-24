@@ -17,13 +17,13 @@
     },
     {
       "path": ".streamlit/secrets.toml.example",
-      "size_bytes": 359,
-      "sha256": "1bf76bc27b35701ccfacb0777005830d17eea3b49df6eb586597eeed33af55fb"
+      "size_bytes": 358,
+      "sha256": "ff5d55a747e987ca03c2f8a9c89e957a8be3ddc8a478681368ece724b06dddb8"
     },
     {
       "path": "README.md",
-      "size_bytes": 2066,
-      "sha256": "d891a943aafd5e4e8582c8e4794a3aac00aa874a5d76f102789f33d0067feae3"
+      "size_bytes": 2168,
+      "sha256": "ffac69431461c75e68ed000074244983dbac8c3b7c87c1e58d4f171cc7b227f9"
     },
     {
       "path": "analysis_output/tax_transition_model/candidate_long_short_strategies.csv",
@@ -87,13 +87,13 @@
     },
     {
       "path": "apps/private_tax_transition_app.py",
-      "size_bytes": 83316,
-      "sha256": "c989aefaed056067eedd54ed0262cc49387d2661d07f5b4078dddbf10c5614ad"
+      "size_bytes": 89179,
+      "sha256": "be724b5877e850532ee49b263e461c6381b8e7f9c8e807b15419de04005c057e"
     },
     {
       "path": "apps/market_data.py",
-      "size_bytes": 9627,
-      "sha256": "c8312666a7b0e57bd4cc57a471721eb886e675d36a0a55ff20df6e8e989bc28e"
+      "size_bytes": 20456,
+      "sha256": "45695a685610f8cada075391eadb88cf108f2b082986a7497c1662e43fd6f3e0"
     },
     {
       "path": "requirements.txt",
