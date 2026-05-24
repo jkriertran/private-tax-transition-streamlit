@@ -7,6 +7,29 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+try:
+    from apps.tax_transition_engine import (
+        DEFAULT_HEDGE_ASSUMPTIONS,
+        DEFAULT_STRATEGY_PRIORITIES,
+        build_transition_plan_summary,
+        build_sample_portfolio_from_cluster_summary,
+        long_short_research_markdown,
+        normalize_return_frame,
+        normalize_portfolio_frame,
+        run_transition_analysis,
+    )
+except ModuleNotFoundError:
+    from tax_transition_engine import (
+        DEFAULT_HEDGE_ASSUMPTIONS,
+        DEFAULT_STRATEGY_PRIORITIES,
+        build_transition_plan_summary,
+        build_sample_portfolio_from_cluster_summary,
+        long_short_research_markdown,
+        normalize_return_frame,
+        normalize_portfolio_frame,
+        run_transition_analysis,
+    )
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MODEL_DIR = ROOT / "analysis_output" / "tax_transition_model"
@@ -113,25 +136,25 @@ def enforce_access() -> dict[str, str]:
 
 
 def format_dollars(value: Any, digits: int = 0) -> str:
-    if pd.isna(value):
+    if value == "" or pd.isna(value):
         return ""
     return f"${float(value):,.{digits}f}"
 
 
 def format_pct(value: Any, digits: int = 1) -> str:
-    if pd.isna(value):
+    if value == "" or pd.isna(value):
         return ""
     return f"{float(value) * 100:.{digits}f}%"
 
 
 def format_display_pct(value: Any, digits: int = 1) -> str:
-    if pd.isna(value):
+    if value == "" or pd.isna(value):
         return ""
     return f"{float(value):.{digits}f}%"
 
 
 def format_number(value: Any, digits: int = 0) -> str:
-    if pd.isna(value):
+    if value == "" or pd.isna(value):
         return ""
     return f"{float(value):,.{digits}f}"
 
@@ -216,10 +239,15 @@ def render_static_table(
     formatters: dict[str, Any] | None = None,
 ) -> None:
     formatters = formatters or {}
-    view = df.loc[:, columns].copy()
+    view_source = df.copy()
+    for column in columns:
+        if column not in view_source:
+            view_source[column] = ""
+    view = view_source.loc[:, columns].copy()
     for column, formatter in formatters.items():
         if column in view.columns:
             view[column] = view[column].map(formatter)
+    view = view.fillna("")
     view = view.rename(columns=labels)
     html = view.to_html(index=False, escape=True, border=0)
     st.markdown(f'<div class="table-wrap">{html}</div>', unsafe_allow_html=True)
@@ -254,6 +282,18 @@ def init_page() -> None:
             padding: 12px 14px;
             border-radius: 4px;
             color: #374151;
+        }
+        .decision-brief {
+            border-left: 4px solid #111827;
+            background: #f9fafb;
+            padding: 14px 16px;
+            border-radius: 4px;
+            color: #1f2937;
+            line-height: 1.45;
+            margin: 0.5rem 0 1rem 0;
+        }
+        .decision-brief strong {
+            color: #111827;
         }
         .table-wrap {
             overflow-x: auto;
@@ -315,9 +355,10 @@ def sidebar(access: dict[str, str]) -> str:
         """
         **Safety posture**
 
-        - No raw Schwab exports are loaded.
-        - No uploads, trade actions, or writebacks.
-        - No download buttons.
+        - No raw Schwab exports are required.
+        - Optional simplified portfolio input stays in the Streamlit session.
+        - No raw broker-export uploads, trade actions, or writebacks.
+        - No app-generated trade tickets, broker files, or recommendation downloads.
         - Lot-level table is hidden unless Advisor View is enabled.
         """
     )
@@ -568,7 +609,7 @@ def render_transition(transition: pd.DataFrame) -> None:
 
 
 def render_overlay(overlay_capacity: pd.DataFrame, overlay_economics: pd.DataFrame, candidates: pd.DataFrame) -> None:
-    st.subheader("Long/Short Overlay")
+    st.subheader("Long/Short Overlay Detail")
     st.markdown(
         """
         <div class="security-note">
@@ -734,6 +775,956 @@ def render_risk(risk: pd.DataFrame) -> None:
     )
 
 
+def render_strategy_disclaimer() -> None:
+    st.markdown(
+        """
+        <div class="security-note">
+        This section is educational decision support only. It is not tax, legal, or investment advice.
+        Short sales, hedges, options, wash sales, straddles, constructive sales, exchange funds, charitable
+        transfers, and concentrated positions should be reviewed with qualified tax and investment professionals.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_priority_controls(
+    key_prefix: str,
+    expanded: bool = True,
+    title: str = "Assumptions and priority weights",
+) -> tuple[dict[str, float], dict[str, Any], dict[str, float]]:
+    with st.expander(title, expanded=expanded):
+        c1, c2, c3, c4 = st.columns(4)
+        transition_years = int(
+            c1.number_input(
+                "Gradual sale years",
+                min_value=1,
+                max_value=20,
+                value=3,
+                step=1,
+                key=f"{key_prefix}_transition_years",
+            )
+        )
+        user_horizon_years = int(
+            c2.number_input(
+                "Decision horizon years",
+                min_value=1,
+                max_value=30,
+                value=5,
+                step=1,
+                key=f"{key_prefix}_user_horizon_years",
+            )
+        )
+        loss_offset_budget = float(
+            c3.number_input(
+                "Available harvested losses",
+                min_value=0.0,
+                value=0.0,
+                step=50000.0,
+                format="%.0f",
+                key=f"{key_prefix}_loss_offset_budget",
+            )
+        )
+        philanthropic_intent = bool(c4.checkbox("Charitable intent", value=False, key=f"{key_prefix}_charitable_intent"))
+
+        st.caption("Priority weights control the ranking engine. Higher values give that criterion more influence.")
+        priority_columns = st.columns(4)
+        priorities: dict[str, float] = {}
+        for index, (key, default) in enumerate(DEFAULT_STRATEGY_PRIORITIES.items()):
+            label = key.replace("_", " ").title()
+            priorities[key] = float(
+                priority_columns[index % 4].slider(
+                    label,
+                    min_value=0,
+                    max_value=5,
+                    value=int(default),
+                    step=1,
+                    key=f"{key_prefix}_priority_{key}",
+                )
+            )
+
+        st.caption("Long/short assumption controls affect hedge ranking and implementation-risk scoring.")
+        h1, h2, h3 = st.columns(3)
+        hedge_assumptions = {
+            "annual_borrow_cost_rate": float(
+                h1.number_input(
+                    "Annual borrow/carry cost",
+                    min_value=0.0,
+                    max_value=0.25,
+                    value=float(DEFAULT_HEDGE_ASSUMPTIONS["annual_borrow_cost_rate"]),
+                    step=0.0025,
+                    format="%.4f",
+                    key=f"{key_prefix}_borrow_cost",
+                )
+            ),
+            "liquidity_requirement": float(
+                h2.slider(
+                    "Liquidity requirement",
+                    min_value=0,
+                    max_value=100,
+                    value=int(DEFAULT_HEDGE_ASSUMPTIONS["liquidity_requirement"]),
+                    step=5,
+                    key=f"{key_prefix}_liquidity_requirement",
+                )
+            ),
+            "tax_complexity_tolerance": float(
+                h3.slider(
+                    "Tax complexity tolerance",
+                    min_value=1,
+                    max_value=5,
+                    value=int(DEFAULT_HEDGE_ASSUMPTIONS["tax_complexity_tolerance"]),
+                    step=1,
+                    key=f"{key_prefix}_tax_complexity_tolerance",
+                )
+            ),
+        }
+
+    assumptions = {
+        "transition_years": transition_years,
+        "user_horizon_years": user_horizon_years,
+        "loss_offset_budget": loss_offset_budget,
+        "philanthropic_intent": philanthropic_intent,
+    }
+    return priorities, assumptions, hedge_assumptions
+
+
+def render_portfolio_input(cluster_summary: pd.DataFrame, key_prefix: str, show_help: bool = True) -> pd.DataFrame:
+    st.subheader("Portfolio Input")
+    sample = build_sample_portfolio_from_cluster_summary(cluster_summary)
+    source = st.radio(
+        "Input source",
+        ["Sample from model outputs", "Upload simplified CSV", "Manual editor"],
+        horizontal=True,
+        key=f"{key_prefix}_portfolio_source",
+    )
+
+    if source == "Upload simplified CSV":
+        uploaded = st.file_uploader(
+            "Upload simplified portfolio CSV",
+            type=["csv"],
+            help="Expected fields include ticker, shares, current price, cost basis, holding period, current weight, target weight, and tax rates.",
+            key=f"{key_prefix}_portfolio_upload",
+        )
+        if uploaded is not None:
+            raw_portfolio = pd.read_csv(uploaded)
+        else:
+            st.info("Using sample data until a simplified CSV is uploaded.")
+            raw_portfolio = sample
+    elif source == "Manual editor":
+        raw_portfolio = pd.DataFrame(
+            [
+                {
+                    "Ticker": "",
+                    "Shares": 0.0,
+                    "Current Price": 0.0,
+                    "Cost Basis": 0.0,
+                    "Holding Period": "Long Term",
+                    "Current Weight": 0.0,
+                    "Target Weight": 0.0,
+                    "Federal LTCG Rate": 0.20,
+                    "Federal ST Rate": 0.37,
+                    "NIIT Rate": 0.038,
+                    "State Tax Rate": 0.093,
+                }
+            ]
+        )
+    else:
+        raw_portfolio = sample
+
+    edited = st.data_editor(
+        raw_portfolio,
+        hide_index=True,
+        num_rows="dynamic",
+        width="stretch",
+        column_config={
+            "Ticker": st.column_config.TextColumn(width="small"),
+            "Holding Period": st.column_config.SelectboxColumn(
+                options=["Long Term", "Short Term", "Unknown"],
+                width="small",
+            ),
+            "Shares": st.column_config.NumberColumn(format="%.4f"),
+            "Current Price": st.column_config.NumberColumn(format="$%.2f"),
+            "Cost Basis": st.column_config.NumberColumn(format="$%.0f"),
+            "Current Weight": st.column_config.NumberColumn(format="%.4f"),
+            "Target Weight": st.column_config.NumberColumn(format="%.4f"),
+            "Federal LTCG Rate": st.column_config.NumberColumn(format="%.3f"),
+            "Federal ST Rate": st.column_config.NumberColumn(format="%.3f"),
+            "NIIT Rate": st.column_config.NumberColumn(format="%.3f"),
+            "State Tax Rate": st.column_config.NumberColumn(format="%.3f"),
+        },
+        key=f"{key_prefix}_portfolio_editor",
+    )
+
+    if show_help:
+        with st.expander("Accepted simplified CSV fields"):
+            st.markdown(
+                """
+                The parser accepts common aliases for ticker/symbol, shares/quantity, current price, market value,
+                total cost basis, basis per share, holding period, current portfolio weight, target weight, federal
+                long-term rate, federal short-term rate, NIIT rate, and state tax rate. Percent fields can be entered
+                as decimals such as `0.20` or whole percents such as `20`.
+                """
+            )
+    return edited
+
+
+def render_return_data_input(bundled_returns: pd.DataFrame | None = None, key_prefix: str = "returns") -> pd.DataFrame:
+    st.subheader("Daily Return Data")
+    uploaded = st.file_uploader(
+        "Optional daily returns or prices CSV",
+        type=["csv"],
+        help="Accepted formats: long date/ticker/return, long date/ticker/price, or wide date plus one ticker column each.",
+        key=f"{key_prefix}_daily_returns_upload",
+    )
+    if uploaded is not None:
+        raw_returns = pd.read_csv(uploaded)
+    elif bundled_returns is not None and not bundled_returns.empty:
+        raw_returns = bundled_returns
+    else:
+        raw_returns = pd.DataFrame()
+
+    returns = normalize_return_frame(raw_returns)
+    if returns.empty:
+        st.info("No daily return file is loaded. Hedge and regime results will use the existing summary proxy evidence.")
+    else:
+        start = returns["date"].min().date()
+        end = returns["date"].max().date()
+        tickers = returns["ticker"].nunique()
+        st.caption(f"Loaded {len(returns):,} return rows for {tickers:,} tickers from {start} to {end}.")
+    return returns
+
+
+def render_sensitivity_tables(sensitivity_tables: dict[str, pd.DataFrame]) -> None:
+    st.subheader("Scenario and Sensitivity Analysis")
+    tax_rate = sensitivity_tables.get("tax_rate", pd.DataFrame())
+    if not tax_rate.empty:
+        st.caption("Tax-rate sensitivity uses the same sale-to-target fractions and available harvested-loss budget.")
+        tax_display = percent_display(tax_rate, ["tax_rate_delta"])
+        render_static_table(
+            tax_display,
+            ["tax_rate_delta", "realized_gain", "estimated_tax"],
+            {
+                "tax_rate_delta": "Tax-Rate Shock",
+                "realized_gain": "Realized Gain",
+                "estimated_tax": "Estimated Tax",
+            },
+            {
+                "tax_rate_delta": format_display_pct,
+                "realized_gain": format_dollars,
+                "estimated_tax": format_dollars,
+            },
+        )
+
+    with st.expander("Price drawdown sensitivity", expanded=False):
+        drawdown = sensitivity_tables.get("price_drawdown", pd.DataFrame())
+        if not drawdown.empty:
+            st.caption("Price shocks keep the current sale fractions fixed; target weights are not recomputed after each shock.")
+            drawdown_display = percent_display(drawdown, ["price_shock"])
+            render_static_table(
+                drawdown_display,
+                ["ticker", "price_shock", "sale_value", "realized_gain", "estimated_tax"],
+                {
+                    "ticker": "Ticker",
+                    "price_shock": "Price Shock",
+                    "sale_value": "Sale Value",
+                    "realized_gain": "Realized Gain",
+                    "estimated_tax": "Estimated Tax",
+                },
+                {
+                    "price_shock": format_display_pct,
+                    "sale_value": format_dollars,
+                    "realized_gain": format_dollars,
+                    "estimated_tax": format_dollars,
+                },
+            )
+
+    with st.expander("Hedge correlation-breakdown sensitivity", expanded=False):
+        hedge = sensitivity_tables.get("hedge_correlation", pd.DataFrame())
+        if not hedge.empty:
+            hedge_display = percent_display(hedge, ["correlation_multiplier", "stressed_correlation", "tracking_error", "volatility_reduction"])
+            render_static_table(
+                hedge_display,
+                [
+                    "ticker",
+                    "hedge_type",
+                    "proposed_hedge",
+                    "correlation_multiplier",
+                    "stressed_correlation",
+                    "tracking_error",
+                    "volatility_reduction",
+                ],
+                {
+                    "ticker": "Ticker",
+                    "hedge_type": "Hedge Type",
+                    "proposed_hedge": "Hedge",
+                    "correlation_multiplier": "Correlation Multiplier",
+                    "stressed_correlation": "Stressed Correlation",
+                    "tracking_error": "Tracking Error",
+                    "volatility_reduction": "Vol Reduction",
+                },
+                {
+                    "correlation_multiplier": format_display_pct,
+                    "stressed_correlation": format_display_pct,
+                    "tracking_error": format_display_pct,
+                    "volatility_reduction": format_display_pct,
+                },
+            )
+
+    with st.expander("Loss-harvest shortfall sensitivity", expanded=False):
+        loss = sensitivity_tables.get("loss_shortfall", pd.DataFrame())
+        if not loss.empty:
+            st.caption("Coverage rows are hypothetical offsets against the sale-to-target gain, not a claim that those losses exist.")
+            loss_display = percent_display(loss, ["loss_offset_coverage"])
+            render_static_table(
+                loss_display,
+                [
+                    "loss_offset_coverage",
+                    "loss_offset_budget",
+                    "loss_offset_used",
+                    "remaining_unoffset_gain",
+                    "estimated_tax",
+                ],
+                {
+                    "loss_offset_coverage": "Loss Offset Coverage",
+                    "loss_offset_budget": "Loss Offset Budget",
+                    "loss_offset_used": "Loss Offset Used",
+                    "remaining_unoffset_gain": "Remaining Unoffset Gain",
+                    "estimated_tax": "Estimated Tax",
+                },
+                {
+                    "loss_offset_coverage": format_display_pct,
+                    "loss_offset_budget": format_dollars,
+                    "loss_offset_used": format_dollars,
+                    "remaining_unoffset_gain": format_dollars,
+                    "estimated_tax": format_dollars,
+                },
+            )
+
+
+def render_decision_brief(results: dict[str, pd.DataFrame]) -> None:
+    portfolio_summary = results["portfolio_summary"].iloc[0]
+    strategy_summary = results["portfolio_strategy_summary"]
+    top_strategy = str(portfolio_summary["top_portfolio_strategy"])
+    selected = strategy_summary[strategy_summary["strategy"] == top_strategy]
+    row = selected.iloc[0] if not selected.empty else pd.Series(dtype=object)
+    estimated_tax = format_dollars(row.get("estimated_tax", 0.0))
+    sale_value = format_dollars(row.get("sale_value", 0.0))
+    realized_gain = format_dollars(row.get("realized_gain", 0.0))
+    current_weight = format_pct(portfolio_summary["current_portfolio_weight"])
+    target_weight = format_pct(portfolio_summary["target_portfolio_weight"])
+
+    st.subheader("Decision Brief")
+    st.markdown(
+        f"""
+        <div class="decision-brief">
+        <strong>Question:</strong> how much concentration can be reduced without creating an unacceptable tax or implementation burden?<br>
+        <strong>Current read:</strong> the analyzed positions are {current_weight} of the account versus a modeled target of {target_weight}.<br>
+        <strong>Model answer:</strong> {top_strategy} is currently highest-ranked, with about {sale_value} of modeled sales,
+        {realized_gain} of realized gain, and {estimated_tax} of estimated tax before professional review.<br>
+        <strong>Decision gate:</strong> use the plan tab to choose the strategy, set a tax budget, assign review owners, and stop before trading if the checklist is not complete.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_normalized_portfolio_table(portfolio: pd.DataFrame) -> None:
+    portfolio_display = percent_display(
+        portfolio,
+        [
+            "unrealized_gain_pct",
+            "current_weight",
+            "target_weight",
+            "sale_fraction_to_target",
+            "gain_tax_rate",
+        ],
+    )
+    render_static_table(
+        portfolio_display,
+        [
+            "ticker",
+            "shares",
+            "current_price",
+            "market_value",
+            "cost_basis",
+            "unrealized_gain",
+            "unrealized_gain_pct",
+            "holding_period",
+            "current_weight",
+            "target_weight",
+            "sale_fraction_to_target",
+            "gain_tax_rate",
+        ],
+        {
+            "ticker": "Ticker",
+            "shares": "Shares",
+            "current_price": "Price",
+            "market_value": "Market Value",
+            "cost_basis": "Cost Basis",
+            "unrealized_gain": "Unrealized Gain",
+            "unrealized_gain_pct": "Gain / Value",
+            "holding_period": "Holding Period",
+            "current_weight": "Current Weight",
+            "target_weight": "Target Weight",
+            "sale_fraction_to_target": "Sale To Target",
+            "gain_tax_rate": "Modeled Gain Tax Rate",
+        },
+        {
+            "shares": lambda x: format_number(x, 2),
+            "current_price": lambda x: format_dollars(x, 2),
+            "market_value": format_dollars,
+            "cost_basis": format_dollars,
+            "unrealized_gain": format_dollars,
+            "unrealized_gain_pct": format_display_pct,
+            "current_weight": format_display_pct,
+            "target_weight": format_display_pct,
+            "sale_fraction_to_target": format_display_pct,
+            "gain_tax_rate": format_display_pct,
+        },
+    )
+
+
+def render_long_short_summary(long_short: pd.DataFrame) -> None:
+    if long_short.empty:
+        st.info("No long/short hedge evidence is available for the selected positions.")
+        return
+    if "hedge_type" not in long_short or "ticker" not in long_short:
+        st.info("Long/short evidence is incomplete. Add proxy correlation data before using the hedge summary.")
+        return
+
+    available = long_short[long_short["hedge_type"].astype(str) != "Data unavailable"].copy()
+    unavailable = sorted(set(long_short.loc[long_short["hedge_type"].astype(str) == "Data unavailable", "ticker"].astype(str)))
+    if available.empty:
+        st.info("No positions have enough proxy evidence for a hedge summary. Add daily returns or proxy correlations.")
+        return
+
+    top_hedges = (
+        available.sort_values(["ticker", "rank_score"], ascending=[True, False])
+        .groupby("ticker", as_index=False)
+        .head(1)
+        .reset_index(drop=True)
+    )
+    st.caption("Top hedge per ticker. Treat this as research evidence, not automatic permission to short or hedge.")
+    if unavailable:
+        st.caption(f"No hedge evidence is available for: {', '.join(unavailable)}.")
+    top_display = percent_display(
+        top_hedges,
+        ["tracking_error", "volatility_reduction", "maximum_drawdown_impact"],
+    )
+    render_static_table(
+        top_display,
+        [
+            "ticker",
+            "hedge_type",
+            "proposed_hedge",
+            "hedge_ratio",
+            "historical_correlation",
+            "historical_beta",
+            "tracking_error",
+            "volatility_reduction",
+            "maximum_drawdown_impact",
+            "return_data_source",
+        ],
+        {
+            "ticker": "Ticker",
+            "hedge_type": "Best Hedge Type",
+            "proposed_hedge": "Instrument / Basket",
+            "hedge_ratio": "Hedge Ratio",
+            "historical_correlation": "Correlation",
+            "historical_beta": "Beta",
+            "tracking_error": "Tracking Error",
+            "volatility_reduction": "Vol Reduction",
+            "maximum_drawdown_impact": "Drawdown Impact (Est.)",
+            "return_data_source": "Evidence Source",
+        },
+        {
+            "hedge_ratio": lambda x: format_number(x, 2),
+            "historical_correlation": lambda x: format_number(x, 2),
+            "historical_beta": lambda x: format_number(x, 2),
+            "tracking_error": format_display_pct,
+            "volatility_reduction": format_display_pct,
+            "maximum_drawdown_impact": format_display_pct,
+        },
+    )
+
+
+def default_completion_window(strategy: str, transition_years: int) -> str:
+    strategy_lower = strategy.lower()
+    if "gradually" in strategy_lower:
+        return f"{transition_years} tax years"
+    if "sell immediately" in strategy_lower:
+        return "After approvals / current tax year"
+    if "hold and monitor" in strategy_lower:
+        return "Monitor quarterly"
+    if "charitable" in strategy_lower:
+        return "Before year-end if contribution is approved"
+    if "long/short" in strategy_lower or "hedge" in strategy_lower:
+        return "Research now; execute only after tax/legal approval"
+    return f"{transition_years} tax years or as approved"
+
+
+def render_strategy_lab(cluster_summary: pd.DataFrame, risk: pd.DataFrame, bundled_returns: pd.DataFrame | None = None) -> None:
+    render_strategy_disclaimer()
+    priorities, assumptions, hedge_assumptions = render_priority_controls(
+        "strategy_lab",
+        expanded=False,
+        title="Strategy assumptions",
+    )
+    with st.expander("Portfolio input", expanded=False):
+        raw_portfolio = render_portfolio_input(cluster_summary, "strategy_lab", show_help=False)
+    with st.expander("Optional daily return data", expanded=False):
+        daily_returns = render_return_data_input(bundled_returns, "strategy_lab")
+    normalized_preview = normalize_portfolio_frame(raw_portfolio)
+
+    if normalized_preview.empty:
+        st.warning("Enter at least one ticker with a market value or shares and price.")
+        return
+
+    results = run_transition_analysis(
+        raw_portfolio,
+        risk,
+        daily_returns=daily_returns,
+        loss_offset_budget=assumptions["loss_offset_budget"],
+        transition_years=assumptions["transition_years"],
+        user_horizon_years=assumptions["user_horizon_years"],
+        philanthropic_intent=assumptions["philanthropic_intent"],
+        priorities=priorities,
+        hedge_assumptions=hedge_assumptions,
+    )
+
+    portfolio = results["portfolio"]
+    portfolio_summary = results["portfolio_summary"].iloc[0]
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Analyzed value", format_dollars(portfolio_summary["total_market_value"]))
+    c2.metric("Embedded gain", format_dollars(portfolio_summary["total_unrealized_gain"]))
+    c3.metric("Current weight", format_pct(portfolio_summary["current_portfolio_weight"]))
+    c4.metric("Target weight", format_pct(portfolio_summary["target_portfolio_weight"]))
+
+    render_decision_brief(results)
+
+    st.subheader("Portfolio-Level Recommendation Summary")
+    st.markdown(f"**Top portfolio-level strategy:** {portfolio_summary['top_portfolio_strategy']}")
+    portfolio_strategy = results["portfolio_strategy_summary"]
+    portfolio_strategy_display = percent_display(
+        portfolio_strategy,
+        ["average_concentration_reduction"],
+    )
+    render_static_table(
+        portfolio_strategy_display,
+        [
+            "strategy",
+            "weighted_rank_score",
+            "estimated_tax",
+            "sale_value",
+            "realized_gain",
+            "average_concentration_reduction",
+            "average_complexity",
+            "average_tax_uncertainty",
+        ],
+        {
+            "strategy": "Strategy",
+            "weighted_rank_score": "Weighted Score",
+            "estimated_tax": "Estimated Tax",
+            "sale_value": "Sale Value",
+            "realized_gain": "Realized Gain",
+            "average_concentration_reduction": "Avg. Target Gap Addressed",
+            "average_complexity": "Avg. Complexity",
+            "average_tax_uncertainty": "Avg. Tax-Rule Uncertainty",
+        },
+        {
+            "weighted_rank_score": lambda x: format_number(x, 1),
+            "estimated_tax": format_dollars,
+            "sale_value": format_dollars,
+            "realized_gain": format_dollars,
+            "average_concentration_reduction": format_display_pct,
+            "average_complexity": lambda x: format_number(x, 1),
+            "average_tax_uncertainty": lambda x: format_number(x, 1),
+        },
+    )
+
+    st.subheader("Position-Level Recommendation Summary")
+    position_summary = results["position_summary"]
+    position_display = percent_display(position_summary, ["concentration_reduction"])
+    render_static_table(
+        position_display,
+        [
+            "ticker",
+            "strategy",
+            "rank_score",
+            "estimated_tax",
+            "sale_value",
+            "realized_gain",
+            "loss_offset_used",
+            "concentration_reduction",
+            "assumptions",
+        ],
+        {
+            "ticker": "Ticker",
+            "strategy": "Recommended Strategy",
+            "rank_score": "Score",
+            "estimated_tax": "Estimated Tax",
+            "sale_value": "Sale Value",
+            "realized_gain": "Realized Gain",
+            "loss_offset_used": "Loss Offset Used",
+            "concentration_reduction": "Target Gap Addressed",
+            "assumptions": "Assumptions",
+        },
+        {
+            "rank_score": lambda x: format_number(x, 1),
+            "estimated_tax": format_dollars,
+            "sale_value": format_dollars,
+            "realized_gain": format_dollars,
+            "loss_offset_used": format_dollars,
+            "concentration_reduction": format_display_pct,
+        },
+    )
+
+    with st.expander("Normalized portfolio detail", expanded=False):
+        st.caption("Parser output used by the scoring engine. Review this before relying on any strategy ranking.")
+        render_normalized_portfolio_table(portfolio)
+
+    with st.expander("Full strategy comparison table", expanded=False):
+        strategy_table = results["strategy_table"].copy()
+        strategy_display = percent_display(strategy_table, ["concentration_reduction"])
+        render_static_table(
+            strategy_display,
+            [
+                "ticker",
+                "strategy",
+                "rank_score",
+                "estimated_tax",
+                "sale_value",
+                "realized_gain",
+                "concentration_reduction",
+                "implementation_complexity",
+                "liquidity_borrow_risk",
+                "tax_rule_uncertainty",
+                "time_horizon_fit",
+            ],
+            {
+                "ticker": "Ticker",
+                "strategy": "Strategy",
+                "rank_score": "Score",
+                "estimated_tax": "Estimated Tax",
+                "sale_value": "Sale Value",
+                "realized_gain": "Realized Gain",
+                "concentration_reduction": "Target Gap Addressed",
+                "implementation_complexity": "Complexity",
+                "liquidity_borrow_risk": "Liquidity/Borrow Risk",
+                "tax_rule_uncertainty": "Tax-Rule Uncertainty",
+                "time_horizon_fit": "Time Fit",
+            },
+            {
+                "rank_score": lambda x: format_number(x, 1),
+                "estimated_tax": format_dollars,
+                "sale_value": format_dollars,
+                "realized_gain": format_dollars,
+                "concentration_reduction": format_display_pct,
+                "implementation_complexity": lambda x: format_number(x, 1),
+                "liquidity_borrow_risk": lambda x: format_number(x, 1),
+                "tax_rule_uncertainty": lambda x: format_number(x, 1),
+                "time_horizon_fit": lambda x: format_number(x, 1),
+            },
+        )
+
+    render_sensitivity_tables(results["sensitivity_tables"])
+
+    st.subheader("Long/Short Strategy Research")
+    long_short = results["long_short_table"]
+    st.markdown(long_short_research_markdown(long_short))
+    render_long_short_summary(long_short)
+    with st.expander("Full long/short evidence table", expanded=False):
+        long_short_display = percent_display(
+            long_short,
+            ["volatility_reduction", "maximum_drawdown_impact", "tracking_error"],
+        )
+        render_static_table(
+            long_short_display,
+            [
+                "ticker",
+                "hedge_type",
+                "proposed_hedge",
+                "hedge_ratio",
+                "historical_correlation",
+                "historical_beta",
+                "tracking_error",
+                "volatility_reduction",
+                "maximum_drawdown_impact",
+                "drawdown_impact_method",
+                "annual_borrow_cost_estimate",
+                "liquidity_score",
+                "borrow_score",
+                "tax_simplicity_score",
+                "return_data_source",
+                "regime_detection_method",
+                "scenario_behavior_by_regime",
+                "tax_legal_risk_flags",
+                "data_limitations",
+                "why_selected_over_alternatives",
+            ],
+            {
+                "ticker": "Ticker",
+                "hedge_type": "Hedge Type",
+                "proposed_hedge": "Instrument / Basket",
+                "hedge_ratio": "Hedge Ratio",
+                "historical_correlation": "Correlation",
+                "historical_beta": "Beta",
+                "tracking_error": "Tracking Error",
+                "volatility_reduction": "Vol Reduction",
+                "maximum_drawdown_impact": "Drawdown Impact (Est.)",
+                "drawdown_impact_method": "Drawdown Method",
+                "annual_borrow_cost_estimate": "Annual Borrow Cost",
+                "liquidity_score": "Liquidity Score",
+                "borrow_score": "Borrow Score",
+                "tax_simplicity_score": "Tax Simplicity",
+                "return_data_source": "Evidence Source",
+                "regime_detection_method": "Regime Method",
+                "scenario_behavior_by_regime": "Scenario Behavior by Regime",
+                "tax_legal_risk_flags": "Tax / Legal Risk Flags",
+                "data_limitations": "Data Limitations",
+                "why_selected_over_alternatives": "Why Selected Over Alternatives",
+            },
+            {
+                "hedge_ratio": lambda x: format_number(x, 2),
+                "historical_correlation": lambda x: format_number(x, 2),
+                "historical_beta": lambda x: format_number(x, 2),
+                "tracking_error": format_display_pct,
+                "volatility_reduction": format_display_pct,
+                "maximum_drawdown_impact": format_display_pct,
+                "annual_borrow_cost_estimate": format_dollars,
+                "liquidity_score": lambda x: format_number(x, 1),
+                "borrow_score": lambda x: format_number(x, 1),
+                "tax_simplicity_score": lambda x: format_number(x, 1),
+            },
+        )
+
+    st.subheader("Research and Rationale")
+    for _, row in position_summary.iterrows():
+        with st.expander(f"{row['ticker']}: {row['strategy']}", expanded=False):
+            st.markdown(f"**Assumptions used:** {row['assumptions']}")
+            st.markdown(f"**Pros:** {row['pros']}")
+            st.markdown(f"**Cons:** {row['cons']}")
+            st.markdown(f"**Key risks:** {row['key_risks']}")
+            st.markdown(f"**Situations where it may not apply:** {row['not_applicable_when']}")
+
+
+def render_status_badge(label: str, status: str) -> None:
+    colors = {
+        "Complete": "#166534",
+        "Approved": "#166534",
+        "In Review": "#92400e",
+        "Needed": "#991b1b",
+        "Not Started": "#991b1b",
+        "Not Applicable": "#4b5563",
+    }
+    color = colors.get(status, "#374151")
+    st.markdown(
+        f"<span style='display:inline-block;margin:2px 8px 6px 0;color:{color};font-weight:700;'>{label}: {status}</span>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_transition_plan_builder(
+    cluster_summary: pd.DataFrame,
+    risk: pd.DataFrame,
+    bundled_returns: pd.DataFrame | None = None,
+) -> None:
+    render_strategy_disclaimer()
+    st.subheader("One-Page Transition Plan Builder")
+    st.caption("Use this to turn the analysis into a review-ready draft: decision, tax budget, review gates, and execution rules.")
+
+    st.markdown(
+        """
+        <div class="decision-brief">
+        <strong>Planning flow:</strong> confirm the analysis inputs, choose the strategy, set the tax budget,
+        complete the professional-review checklist, then approve execution rules. This screen is a draft plan,
+        not a trade authorization.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    priorities, assumptions, hedge_assumptions = render_priority_controls(
+        "transition_plan",
+        expanded=False,
+        title="Analysis assumptions used for this plan",
+    )
+    with st.expander("Portfolio input used for this plan", expanded=False):
+        raw_portfolio = render_portfolio_input(cluster_summary, "transition_plan", show_help=False)
+    with st.expander("Optional return data used for hedge research", expanded=False):
+        daily_returns = render_return_data_input(bundled_returns, "transition_plan")
+    if normalize_portfolio_frame(raw_portfolio).empty:
+        st.warning("Enter at least one ticker with a market value or shares and price.")
+        return
+
+    results = run_transition_analysis(
+        raw_portfolio,
+        risk,
+        daily_returns=daily_returns,
+        loss_offset_budget=assumptions["loss_offset_budget"],
+        transition_years=assumptions["transition_years"],
+        user_horizon_years=assumptions["user_horizon_years"],
+        philanthropic_intent=assumptions["philanthropic_intent"],
+        priorities=priorities,
+        hedge_assumptions=hedge_assumptions,
+    )
+
+    strategy_options = list(results["portfolio_strategy_summary"]["strategy"]) if not results["portfolio_strategy_summary"].empty else []
+    default_strategy = results["portfolio_summary"].iloc[0]["top_portfolio_strategy"]
+    strategy_index = strategy_options.index(default_strategy) if default_strategy in strategy_options else 0
+
+    st.subheader("Decision Inputs")
+    c1, c2, c3 = st.columns(3)
+    plan_owner = c1.text_input("Plan owner", value="Investment team / advisor")
+    decision_status = c2.selectbox(
+        "Decision status",
+        ["Draft", "Ready for professional review", "Approved for execution", "Paused"],
+        index=0,
+    )
+    selected_strategy = c3.selectbox("Chosen strategy", strategy_options, index=strategy_index if strategy_options else 0)
+
+    preliminary = build_transition_plan_summary(results, selected_strategy)
+    c4, c5, c6 = st.columns(3)
+    max_tax_budget = float(
+        c4.number_input(
+            "Maximum tax budget",
+            min_value=0.0,
+            value=float(preliminary["max_tax_budget"]),
+            step=50000.0,
+            format="%.0f",
+        )
+    )
+    completion_window = c5.text_input(
+        "Target completion window",
+        value=default_completion_window(selected_strategy, assumptions["transition_years"]),
+        key=f"transition_plan_completion_window_{selected_strategy}",
+    )
+    hedge_permission = c6.selectbox(
+        "Hedge permission",
+        ["No hedge without further approval", "Research hedge only", "Approved after tax/legal review", "No hedging permitted"],
+        index=0,
+    )
+
+    plan = build_transition_plan_summary(results, selected_strategy, max_tax_budget)
+    objective = st.text_area("Decision objective", value=plan["objective"], height=90)
+    implementation_rules = st.text_area(
+        "Execution rules",
+        value=(
+            "Do not trade until tax/legal review is complete.\n"
+            "Use lot-level instructions for all sales.\n"
+            "Stop and re-review if estimated tax exceeds budget, position price moves materially, or hedge correlation breaks down."
+        ),
+        height=120,
+    )
+
+    st.subheader("One-Page Plan Preview")
+    p1, p2, p3, p4 = st.columns(4)
+    p1.metric("Current weight", format_pct(plan["current_weight"]))
+    p2.metric("Target weight", format_pct(plan["target_weight"]))
+    p3.metric("Estimated tax", format_dollars(plan["estimated_tax"]))
+    p4.metric("Tax budget remaining", format_dollars(plan["tax_budget_remaining"]))
+
+    st.markdown(
+        f"""
+        <div class="security-note">
+        <strong>Status:</strong> {decision_status}<br>
+        <strong>Owner:</strong> {plan_owner}<br>
+        <strong>Objective:</strong> {objective}<br>
+        <strong>Chosen strategy:</strong> {selected_strategy}<br>
+        <strong>Completion window:</strong> {completion_window}<br>
+        <strong>Hedge policy:</strong> {hedge_permission}<br>
+        <strong>Hedge evidence:</strong> {plan["hedge_summary"]}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    plan_rows = pd.DataFrame(
+        [
+            {"Plan Field": "Total analyzed value", "Plan Value": format_dollars(plan["total_market_value"])},
+            {"Plan Field": "Total unrealized gain", "Plan Value": format_dollars(plan["total_unrealized_gain"])},
+            {"Plan Field": "Estimated sale value", "Plan Value": format_dollars(plan["estimated_sale_value"])},
+            {"Plan Field": "Estimated realized gain", "Plan Value": format_dollars(plan["estimated_realized_gain"])},
+            {"Plan Field": "Loss offset used", "Plan Value": format_dollars(plan["loss_offset_used"])},
+            {"Plan Field": "After-tax sale proceeds", "Plan Value": format_dollars(plan["after_tax_sale_proceeds"])},
+            {"Plan Field": "Maximum tax budget", "Plan Value": format_dollars(plan["max_tax_budget"])},
+            {"Plan Field": "Positions analyzed", "Plan Value": format_number(plan["positions_analyzed"], 0)},
+        ]
+    )
+    render_static_table(plan_rows, ["Plan Field", "Plan Value"], {"Plan Field": "Plan Field", "Plan Value": "Plan Value"})
+
+    with st.expander("Position actions", expanded=True):
+        st.text(plan["primary_position_actions"] or "No position actions available.")
+
+    with st.expander("Execution rules", expanded=True):
+        st.text(implementation_rules)
+
+    st.subheader("Professional Review Checklist")
+    st.caption("These gates keep the draft plan from being mistaken for permission to trade.")
+    checklist_defaults = pd.DataFrame(
+        [
+            {"Review Item": "CPA confirms tax rates, gain character, and loss-offset availability", "Owner": "CPA", "Status": "Needed"},
+            {"Review Item": "Tax counsel reviews constructive-sale, straddle, wash-sale, and short-against-the-box issues", "Owner": "Tax counsel", "Status": "Needed"},
+            {"Review Item": "Investment advisor confirms target allocation and replacement portfolio", "Owner": "Advisor", "Status": "Needed"},
+            {"Review Item": "Trading desk confirms liquidity, borrow, margin, and restricted-list constraints", "Owner": "Trading desk", "Status": "Needed"},
+            {"Review Item": "Client approves tax budget, risk tradeoff, and implementation window", "Owner": "Client", "Status": "Needed"},
+        ]
+    )
+    checklist = st.data_editor(
+        checklist_defaults,
+        hide_index=True,
+        num_rows="dynamic",
+        width="stretch",
+        column_config={
+            "Status": st.column_config.SelectboxColumn(
+                options=["Needed", "In Review", "Complete", "Approved", "Not Applicable"],
+                width="medium",
+            )
+        },
+        key="transition_plan_checklist",
+    )
+
+    st.subheader("Implementation Milestones")
+    milestones_default = pd.DataFrame(
+        [
+            {"Step": 1, "Milestone": "Finalize target weight and tax budget", "Timing": "Before trading", "Owner": "Client / advisor", "Status": "Not Started"},
+            {"Step": 2, "Milestone": "Select tax lots and sale schedule", "Timing": "Before first trade", "Owner": "CPA / advisor", "Status": "Not Started"},
+            {"Step": 3, "Milestone": "Complete professional review checklist", "Timing": "Before execution", "Owner": "All reviewers", "Status": "Not Started"},
+            {"Step": 4, "Milestone": "Execute approved sale or hedge tranche", "Timing": "Per schedule", "Owner": "Advisor / trading desk", "Status": "Not Started"},
+            {"Step": 5, "Milestone": "Monitor tax used, residual concentration, hedge tracking error, and year-end losses", "Timing": "Monthly / year-end", "Owner": "Advisor / CPA", "Status": "Not Started"},
+        ]
+    )
+    milestones = st.data_editor(
+        milestones_default,
+        hide_index=True,
+        num_rows="dynamic",
+        width="stretch",
+        column_config={
+            "Step": st.column_config.NumberColumn(format="%d", width="small"),
+            "Status": st.column_config.SelectboxColumn(
+                options=["Not Started", "In Review", "Complete", "Approved", "Not Applicable"],
+                width="medium",
+            ),
+        },
+        key="transition_plan_milestones",
+    )
+
+    checklist_counts = checklist["Status"].value_counts().to_dict() if "Status" in checklist else {}
+    milestone_counts = milestones["Status"].value_counts().to_dict() if "Status" in milestones else {}
+    st.subheader("Readiness Snapshot")
+    rc1, rc2, rc3 = st.columns(3)
+    rc1.metric("Checklist complete", f"{checklist_counts.get('Complete', 0) + checklist_counts.get('Approved', 0):,}/{len(checklist):,}")
+    rc2.metric("Milestones complete", f"{milestone_counts.get('Complete', 0) + milestone_counts.get('Approved', 0):,}/{len(milestones):,}")
+    rc3.metric("Tax budget status", "Within budget" if plan["tax_budget_remaining"] >= 0 else "Over budget")
+
+    for label, status in [
+        ("CPA/tax review", checklist.loc[0, "Status"] if len(checklist) > 0 else "Needed"),
+        ("Legal hedge review", checklist.loc[1, "Status"] if len(checklist) > 1 else "Needed"),
+        ("Client approval", checklist.loc[4, "Status"] if len(checklist) > 4 else "Needed"),
+    ]:
+        render_status_badge(label, str(status))
+
+
 def render_qa(rec: pd.DataFrame) -> None:
     st.subheader("Data QA")
     st.caption("Reconciliation of normalized lot data against Schwab lot-detail files and Schwab total rows.")
@@ -873,26 +1864,40 @@ def main() -> None:
     overlay_economics = load_csv("overlay_economics.csv")
     candidates = load_csv("candidate_long_short_strategies.csv")
     risk = load_csv("risk_proxy_correlation.csv")
+    bundled_returns = load_optional_csv("daily_returns.csv")
     lots = load_optional_csv("semiconductor_cluster_tax_lot_exposure.csv")
     sale_schedule = load_optional_csv("sale_lot_schedule.csv")
 
     st.title("Private Tax Transition Dashboard")
-    st.caption("Semiconductor/memory/storage concentrated-position transition model")
+    st.caption("Concentration diagnosis -> strategy comparison -> review-ready transition plan")
 
-    tabs = ["Overview", "Transition", "Long/Short Overlay", "Risk Proxies", "Data QA", "Notes"]
+    tabs = [
+        "Overview",
+        "Strategy Lab",
+        "Transition Plan",
+        "Tax Scenarios",
+        "Long/Short Detail",
+        "Risk Evidence",
+        "Data QA",
+        "Notes",
+    ]
     if audience == "Advisor View":
-        tabs.insert(5, "Advisor Detail")
+        tabs.insert(6, "Advisor Detail")
 
     tab_objects = st.tabs(tabs)
     for label, tab in zip(tabs, tab_objects):
         with tab:
             if label == "Overview":
                 render_overview(rec, cluster_summary, bucket_summary, risk_weights, lots)
-            elif label == "Transition":
+            elif label == "Strategy Lab":
+                render_strategy_lab(cluster_summary, risk, bundled_returns)
+            elif label == "Transition Plan":
+                render_transition_plan_builder(cluster_summary, risk, bundled_returns)
+            elif label == "Tax Scenarios":
                 render_transition(transition)
-            elif label == "Long/Short Overlay":
+            elif label == "Long/Short Detail":
                 render_overlay(overlay_capacity, overlay_economics, candidates)
-            elif label == "Risk Proxies":
+            elif label == "Risk Evidence":
                 render_risk(risk)
             elif label == "Data QA":
                 render_qa(rec)
