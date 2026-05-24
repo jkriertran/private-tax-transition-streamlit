@@ -245,7 +245,7 @@ def enforce_access() -> dict[str, str]:
         user = st.user
         is_logged_in = bool(getattr(user, "is_logged_in", False))
         if not is_logged_in:
-            st.title("Private Tax Transition Dashboard")
+            st.title("Tax Transition Strategy Workbench")
             st.caption("Sign in with the email address that was explicitly approved for this report.")
             connection = str(safe_secret("access", "oidc_connection", "") or "").strip()
             if connection:
@@ -273,7 +273,7 @@ def enforce_access() -> dict[str, str]:
 
         return {"email": email, "method": "oidc_allowlist"}
 
-    st.title("Private Tax Transition Dashboard")
+    st.title("Tax Transition Strategy Workbench")
     st.error("Access is locked because no approved access mode is configured.")
     st.markdown(
         "Set `TAX_APP_ACCESS_MODE=local_dev` for local testing, or configure "
@@ -402,7 +402,7 @@ def render_static_table(
 
 def init_page() -> None:
     st.set_page_config(
-        page_title="Private Tax Transition Dashboard",
+        page_title="Tax Transition Strategy Workbench",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -410,6 +410,42 @@ def init_page() -> None:
         """
         <style>
         .block-container { padding-top: 2rem; padding-bottom: 3rem; }
+        .workflow-strip {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(150px, 1fr));
+            gap: 10px;
+            margin: 1rem 0 1.25rem 0;
+        }
+        .workflow-step {
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            background: #ffffff;
+            padding: 12px 14px;
+            min-height: 92px;
+        }
+        .workflow-step .phase {
+            color: #6b7280;
+            font-size: 0.76rem;
+            font-weight: 700;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        .workflow-step .name {
+            color: #111827;
+            font-size: 1rem;
+            font-weight: 800;
+            line-height: 1.2;
+            margin-bottom: 6px;
+        }
+        .workflow-step .outcome {
+            color: #4b5563;
+            font-size: 0.84rem;
+            line-height: 1.3;
+        }
+        @media (max-width: 900px) {
+            .workflow-strip { grid-template-columns: 1fr; }
+        }
         div[data-testid="stMetric"] {
             border: 1px solid #e5e7eb;
             border-radius: 8px;
@@ -479,6 +515,41 @@ def init_page() -> None:
     )
 
 
+def render_workflow_header() -> None:
+    st.markdown(
+        """
+        <div class="workflow-strip">
+            <div class="workflow-step">
+                <div class="phase">Step 1</div>
+                <div class="name">Diagnose</div>
+                <div class="outcome">Confirm concentration, embedded gain, and data readiness.</div>
+            </div>
+            <div class="workflow-step">
+                <div class="phase">Step 2</div>
+                <div class="name">Compare</div>
+                <div class="outcome">Rank sale, hold, harvest, hedge, and charitable paths.</div>
+            </div>
+            <div class="workflow-step">
+                <div class="phase">Step 3</div>
+                <div class="name">Select Design</div>
+                <div class="outcome">Evaluate SMA mandates or DIY guardrails.</div>
+            </div>
+            <div class="workflow-step">
+                <div class="phase">Step 4</div>
+                <div class="name">Draft Plan</div>
+                <div class="outcome">Set tax budget, owners, review gates, and milestones.</div>
+            </div>
+            <div class="workflow-step">
+                <div class="phase">Step 5</div>
+                <div class="name">Verify</div>
+                <div class="outcome">Check scenarios, evidence, QA, and professional-review limits.</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def sidebar(access: dict[str, str]) -> str:
     st.sidebar.title("Report Access")
     st.sidebar.caption("Read-only dashboard")
@@ -498,18 +569,17 @@ def sidebar(access: dict[str, str]) -> str:
         st.sidebar.info("Advisor View is disabled for this deployment.")
 
     st.sidebar.divider()
-    st.sidebar.markdown(
-        """
-        **Safety posture**
-
-        - No raw Schwab exports are required.
-        - Optional simplified portfolio input stays in the Streamlit session.
-        - Optional Alpaca market-data lookup is read-only and data-only.
-        - No raw broker-export uploads, trade actions, or writebacks.
-        - No app-generated trade tickets, broker files, or recommendation downloads.
-        - Lot-level table is hidden unless Advisor View is enabled.
-        """
-    )
+    with st.sidebar.expander("Safety posture", expanded=False):
+        st.markdown(
+            """
+            - No raw Schwab exports are required.
+            - Optional simplified portfolio input stays in the Streamlit session.
+            - Optional Alpaca market-data lookup is read-only and data-only.
+            - No raw broker-export uploads, trade actions, or writebacks.
+            - No app-generated trade tickets, broker files, or recommendation downloads.
+            - Lot-level table is hidden unless Advisor View is enabled.
+            """
+        )
     return audience
 
 
@@ -561,6 +631,24 @@ def render_concentration_answer(cluster_summary: pd.DataFrame, risk_weights: pd.
     c4.metric("SNDK/WDC vol-weighted cluster risk", format_pct(primary_risk_weight))
 
 
+def render_diagnosis_brief(cluster_summary: pd.DataFrame) -> None:
+    cluster_market_value = float(cluster_summary["market_value"].sum())
+    cluster_unrealized_gain = float(cluster_summary["unrealized_gain"].sum())
+    cluster_weight = float(cluster_summary["account_market_value_weight"].sum())
+    gain_ratio = cluster_unrealized_gain / cluster_market_value if cluster_market_value else 0.0
+    st.markdown(
+        f"""
+        <div class="decision-brief">
+        <strong>Current diagnosis:</strong> the modeled cluster is {format_pct(cluster_weight)} of the account with
+        {format_dollars(cluster_unrealized_gain)} of embedded gain, or {format_pct(gain_ratio)} of cluster value.<br>
+        <strong>Decision path:</strong> use Compare Strategies to choose the transition direction, then use SMA Designs
+        or DIY Builder only if a long/short implementation remains on the table. Use Transition Plan last.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_overview(
     rec: pd.DataFrame,
     cluster_summary: pd.DataFrame,
@@ -570,6 +658,7 @@ def render_overview(
 ) -> None:
     render_concentration_answer(cluster_summary, risk_weights)
     data_status(rec, cluster_summary, lots)
+    render_diagnosis_brief(cluster_summary)
     st.subheader("Semiconductor Cluster Exposure")
     st.caption("Derived from normalized Schwab lot-detail exports. SNDK/WDC remain the primary tax-transition focus; the broader cluster drives the risk and overlay design.")
     summary = percent_display(
@@ -2680,6 +2769,40 @@ def render_advisor_lots(lots: pd.DataFrame | None, sale_schedule: pd.DataFrame |
         )
 
 
+def render_evidence_review(
+    transition: pd.DataFrame,
+    overlay_capacity: pd.DataFrame,
+    overlay_economics: pd.DataFrame,
+    candidates: pd.DataFrame,
+    risk: pd.DataFrame,
+    rec: pd.DataFrame,
+    lots: pd.DataFrame | None,
+    sale_schedule: pd.DataFrame | None,
+    audience: str,
+) -> None:
+    st.subheader("Evidence and QA")
+    st.caption("Reference material for tax scenarios, hedge research, risk proxies, data checks, and model limits.")
+    evidence_tabs = ["Tax Scenarios", "Long/Short Detail", "Risk Evidence", "Data QA", "Limits"]
+    if audience == "Advisor View":
+        evidence_tabs.insert(4, "Advisor Detail")
+
+    tab_objects = st.tabs(evidence_tabs)
+    for label, tab in zip(evidence_tabs, tab_objects):
+        with tab:
+            if label == "Tax Scenarios":
+                render_transition(transition)
+            elif label == "Long/Short Detail":
+                render_overlay(overlay_capacity, overlay_economics, candidates)
+            elif label == "Risk Evidence":
+                render_risk(risk)
+            elif label == "Data QA":
+                render_qa(rec)
+            elif label == "Advisor Detail":
+                render_advisor_lots(lots, sale_schedule)
+            elif label == "Limits":
+                render_notes()
+
+
 def render_notes() -> None:
     st.subheader("Important Limits")
     st.markdown(
@@ -2714,49 +2837,44 @@ def main() -> None:
     lots = load_optional_csv("semiconductor_cluster_tax_lot_exposure.csv")
     sale_schedule = load_optional_csv("sale_lot_schedule.csv")
 
-    st.title("Private Tax Transition Dashboard")
-    st.caption("Concentration diagnosis -> strategy comparison -> review-ready transition plan")
+    st.title("Tax Transition Strategy Workbench")
+    st.caption("Diagnose concentration, compare transition paths, choose implementation guardrails, and draft a review-ready plan.")
+    render_workflow_header()
 
     tabs = [
-        "Overview",
-        "Strategy Lab",
-        "SMA Study",
-        "DIY SMA Builder",
+        "Diagnose",
+        "Compare Strategies",
+        "SMA Designs",
+        "DIY Builder",
         "Transition Plan",
-        "Tax Scenarios",
-        "Long/Short Detail",
-        "Risk Evidence",
-        "Data QA",
-        "Notes",
+        "Evidence",
     ]
-    if audience == "Advisor View":
-        tabs.insert(6, "Advisor Detail")
 
     tab_objects = st.tabs(tabs)
     for label, tab in zip(tabs, tab_objects):
         with tab:
-            if label == "Overview":
+            if label == "Diagnose":
                 render_overview(rec, cluster_summary, bucket_summary, risk_weights, lots)
-            elif label == "Strategy Lab":
+            elif label == "Compare Strategies":
                 render_strategy_lab(cluster_summary, risk, bundled_returns)
-            elif label == "SMA Study":
+            elif label == "SMA Designs":
                 render_sma_study(cluster_summary, risk, bundled_returns)
-            elif label == "DIY SMA Builder":
+            elif label == "DIY Builder":
                 render_diy_sma_builder(cluster_summary)
             elif label == "Transition Plan":
                 render_transition_plan_builder(cluster_summary, risk, bundled_returns)
-            elif label == "Tax Scenarios":
-                render_transition(transition)
-            elif label == "Long/Short Detail":
-                render_overlay(overlay_capacity, overlay_economics, candidates)
-            elif label == "Risk Evidence":
-                render_risk(risk)
-            elif label == "Data QA":
-                render_qa(rec)
-            elif label == "Advisor Detail":
-                render_advisor_lots(lots, sale_schedule)
-            elif label == "Notes":
-                render_notes()
+            elif label == "Evidence":
+                render_evidence_review(
+                    transition,
+                    overlay_capacity,
+                    overlay_economics,
+                    candidates,
+                    risk,
+                    rec,
+                    lots,
+                    sale_schedule,
+                    audience,
+                )
 
 
 if __name__ == "__main__":
