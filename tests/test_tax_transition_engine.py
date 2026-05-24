@@ -7,9 +7,11 @@ import pandas as pd
 from apps.tax_transition_engine import (
     MULTI_PROXY_HEDGE_LABEL,
     allocate_loss_offsets,
+    build_sma_due_diligence_checklist,
     build_transition_plan_summary,
     build_sensitivity_tables,
     analyze_long_short_candidates,
+    evaluate_sma_designs,
     estimate_sale_tax,
     normalize_return_frame,
     normalize_portfolio_frame,
@@ -401,6 +403,93 @@ class TaxTransitionEngineTests(unittest.TestCase):
         self.assertAlmostEqual(plan["max_tax_budget"], 5000)
         self.assertIn("Reduce concentrated exposure", plan["objective"])
         self.assertIn("SNDK", plan["primary_position_actions"])
+
+    def test_sma_designs_compare_four_mandates_and_choose_balanced_by_default(self) -> None:
+        portfolio = normalize_portfolio_frame(
+            pd.DataFrame(
+                [
+                    {
+                        "Ticker": "SNDK",
+                        "Shares": 1000,
+                        "Current Price": 100,
+                        "Cost Basis": 10000,
+                        "Current Weight": 0.60,
+                        "Target Weight": 0.10,
+                    },
+                    {
+                        "Ticker": "WDC",
+                        "Shares": 1000,
+                        "Current Price": 80,
+                        "Cost Basis": 12000,
+                        "Current Weight": 0.35,
+                        "Target Weight": 0.08,
+                    },
+                ]
+            )
+        )
+        long_short = pd.DataFrame(
+            [
+                {
+                    "ticker": "SNDK",
+                    "hedge_type": "Sector hedge",
+                    "proposed_hedge": "SOXX",
+                    "rank_score": 82.0,
+                    "volatility_reduction": 0.28,
+                    "maximum_drawdown_impact": 0.18,
+                    "tracking_error": 0.30,
+                    "return_data_source": "daily returns",
+                }
+            ]
+        )
+
+        comparison = evaluate_sma_designs(portfolio, long_short)
+
+        self.assertEqual(len(comparison), 4)
+        self.assertEqual(comparison.iloc[0]["design_id"], "balanced")
+        self.assertIn("wash-sale", comparison["professional_review_flags"].str.cat(sep=" ").lower())
+        self.assertIn("Sector hedge via SOXX", set(comparison["best_hedge_evidence"]))
+
+    def test_sma_designs_respect_simplicity_priorities(self) -> None:
+        portfolio = normalize_portfolio_frame(
+            pd.DataFrame(
+                [
+                    {
+                        "Ticker": "ABC",
+                        "Shares": 100,
+                        "Current Price": 100,
+                        "Cost Basis": 7000,
+                        "Current Weight": 0.20,
+                        "Target Weight": 0.12,
+                    }
+                ]
+            )
+        )
+
+        comparison = evaluate_sma_designs(
+            portfolio,
+            pd.DataFrame(),
+            priorities={
+                "tax_loss_capacity": 1.0,
+                "concentration_transition_fit": 1.0,
+                "risk_control": 1.0,
+                "tax_rule_clarity": 5.0,
+                "implementation_simplicity": 5.0,
+                "liquidity_borrow_safety": 5.0,
+                "cost_efficiency": 5.0,
+                "manager_operational_quality": 2.0,
+                "diversification_benefit": 1.0,
+            },
+        )
+
+        self.assertEqual(comparison.iloc[0]["design_id"], "conservative")
+
+    def test_sma_due_diligence_checklist_includes_tax_and_cost_controls(self) -> None:
+        checklist = build_sma_due_diligence_checklist("Balanced diversified 130/30-150/50 SMA")
+
+        text = " ".join(checklist["Question"].tolist() + checklist["Evidence Needed"].tolist()).lower()
+        self.assertIn("wash", text)
+        self.assertIn("form adv", text)
+        self.assertGreaterEqual(len(checklist), 5)
 
 
 if __name__ == "__main__":

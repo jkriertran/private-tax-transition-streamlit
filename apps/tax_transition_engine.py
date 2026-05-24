@@ -29,6 +29,18 @@ DEFAULT_HEDGE_ASSUMPTIONS = {
     "tax_complexity_tolerance": 3.0,
 }
 
+DEFAULT_SMA_STUDY_PRIORITIES = {
+    "tax_loss_capacity": 5.0,
+    "concentration_transition_fit": 5.0,
+    "risk_control": 4.0,
+    "tax_rule_clarity": 4.0,
+    "implementation_simplicity": 3.0,
+    "liquidity_borrow_safety": 3.0,
+    "cost_efficiency": 2.0,
+    "manager_operational_quality": 3.0,
+    "diversification_benefit": 3.0,
+}
+
 SAMPLE_PRICE_BY_TICKER = {
     "SNDK": 72.0,
     "WDC": 82.0,
@@ -53,6 +65,125 @@ STRATEGY_LABELS = {
     "charitable_daf": "Charitable / donor-advised fund strategy",
     "exchange_direct_indexing": "Exchange fund / direct indexing transition",
 }
+
+SMA_DESIGN_LIBRARY = [
+    {
+        "design_id": "conservative",
+        "design": "Conservative tax-aware equity SMA",
+        "description": "Direct-indexing style long book with a modest, tightly governed hedge sleeve.",
+        "net_exposure": "85%-100%",
+        "gross_exposure": "100%-120%",
+        "long_book": "Broad diversified long basket, high overlap with target equity benchmark, issuer restrictions applied.",
+        "short_book": "Limited index, sector, or factor hedges; single-name shorts are exceptional.",
+        "expected_loss_harvest_potential": "Low to moderate",
+        "estimated_fee_carry": "Lower SMA fee; limited borrow/carry budget.",
+        "expected_tracking_error": "Low to moderate",
+        "base_scores": {
+            "tax_loss_capacity": 45.0,
+            "concentration_transition_fit": 55.0,
+            "risk_control": 55.0,
+            "tax_rule_clarity": 78.0,
+            "implementation_simplicity": 82.0,
+            "liquidity_borrow_safety": 82.0,
+            "cost_efficiency": 72.0,
+            "manager_operational_quality": 65.0,
+            "diversification_benefit": 68.0,
+        },
+        "implementation_complexity": 25.0,
+        "liquidity_borrow_risk": 22.0,
+        "tax_rule_risk": 34.0,
+        "best_when": "Tax-rule clarity, low tracking error, and operational simplicity matter more than maximum harvest capacity.",
+        "avoid_when": "The concentration must be reduced quickly or the investor needs substantial annual loss capacity.",
+        "review_flags": "Confirm wash-sale controls, benchmark restrictions, and whether any hedge could be treated as an offsetting position.",
+    },
+    {
+        "design_id": "balanced",
+        "design": "Balanced diversified 130/30-150/50 SMA",
+        "description": "Diversified tax-aware long/short equity mandate designed to balance harvest capacity, risk control, and implementability.",
+        "net_exposure": "80%-100%",
+        "gross_exposure": "130%-150%",
+        "long_book": "Diversified replacement equity basket with tax-lot aware realization and restricted-list exclusions.",
+        "short_book": "Diversified single-name, sector, and factor shorts sized by liquidity, borrow, and restricted-list rules.",
+        "expected_loss_harvest_potential": "Moderate to high",
+        "estimated_fee_carry": "Moderate SMA fee plus borrow/carry and trading costs.",
+        "expected_tracking_error": "Moderate",
+        "base_scores": {
+            "tax_loss_capacity": 78.0,
+            "concentration_transition_fit": 78.0,
+            "risk_control": 76.0,
+            "tax_rule_clarity": 58.0,
+            "implementation_simplicity": 58.0,
+            "liquidity_borrow_safety": 62.0,
+            "cost_efficiency": 58.0,
+            "manager_operational_quality": 78.0,
+            "diversification_benefit": 80.0,
+        },
+        "implementation_complexity": 55.0,
+        "liquidity_borrow_risk": 48.0,
+        "tax_rule_risk": 52.0,
+        "best_when": "The investor wants meaningful transition help without relying on one substitute security or an aggressive market-neutral book.",
+        "avoid_when": "The investor cannot tolerate leverage, shorting, active turnover, or a manager-dependent tax process.",
+        "review_flags": "Require lot-level reporting, restricted-list controls, real-time wash-sale monitoring, straddle review, and borrow-cost disclosure.",
+    },
+    {
+        "design_id": "hedge_focused",
+        "design": "Hedge-focused transition overlay",
+        "description": "Overlay built mainly to dampen concentrated-position exposure while the legacy stock is sold or donated over time.",
+        "net_exposure": "70%-95%",
+        "gross_exposure": "110%-140%",
+        "long_book": "Legacy concentrated position plus cash/replacement equity sleeve as sales occur.",
+        "short_book": "Sector ETF, broad index, peer basket, or factor hedge selected from historical evidence.",
+        "expected_loss_harvest_potential": "Moderate",
+        "estimated_fee_carry": "Moderate fee; borrow/carry depends heavily on hedge instrument.",
+        "expected_tracking_error": "Moderate to high",
+        "base_scores": {
+            "tax_loss_capacity": 58.0,
+            "concentration_transition_fit": 88.0,
+            "risk_control": 84.0,
+            "tax_rule_clarity": 42.0,
+            "implementation_simplicity": 42.0,
+            "liquidity_borrow_safety": 52.0,
+            "cost_efficiency": 62.0,
+            "manager_operational_quality": 64.0,
+            "diversification_benefit": 50.0,
+        },
+        "implementation_complexity": 68.0,
+        "liquidity_borrow_risk": 58.0,
+        "tax_rule_risk": 72.0,
+        "best_when": "Near-term concentration risk is the main problem and tax/legal counsel approves the hedge design.",
+        "avoid_when": "The hedge is substantially identical, borrow is uncertain, or the investor expects broad diversification from the overlay alone.",
+        "review_flags": "Highest need for constructive-sale, straddle, short-against-the-box, wash-sale, holding-period, and restricted-list review.",
+    },
+    {
+        "design_id": "aggressive",
+        "design": "Aggressive market/factor-neutral long/short SMA",
+        "description": "High-gross active long/short mandate where alpha, factor neutrality, and harvest capacity are primary goals.",
+        "net_exposure": "0%-60%",
+        "gross_exposure": "150%-250%",
+        "long_book": "Active security-selection longs with tax-aware realization but less benchmark-like exposure.",
+        "short_book": "Large diversified single-name and factor short book with active borrow and margin management.",
+        "expected_loss_harvest_potential": "High but uncertain",
+        "estimated_fee_carry": "Highest fee, borrow, margin, trading, and manager-risk budget.",
+        "expected_tracking_error": "High",
+        "base_scores": {
+            "tax_loss_capacity": 84.0,
+            "concentration_transition_fit": 58.0,
+            "risk_control": 78.0,
+            "tax_rule_clarity": 28.0,
+            "implementation_simplicity": 28.0,
+            "liquidity_borrow_safety": 35.0,
+            "cost_efficiency": 35.0,
+            "manager_operational_quality": 56.0,
+            "diversification_benefit": 62.0,
+        },
+        "implementation_complexity": 88.0,
+        "liquidity_borrow_risk": 78.0,
+        "tax_rule_risk": 86.0,
+        "best_when": "The investor deliberately wants an active long/short manager and accepts high tracking error, leverage, and operational complexity.",
+        "avoid_when": "The objective is a clean transition from one concentrated stock into a benchmark-like taxable equity portfolio.",
+        "review_flags": "Requires enhanced manager diligence, margin/borrow review, tax-lot controls, short-sale reporting, and explicit risk limits.",
+    },
+]
 
 
 def _is_missing(value: Any) -> bool:
@@ -1604,6 +1735,221 @@ def build_transition_plan_summary(
         "primary_position_actions": "\n".join(primary_positions),
         "positions_analyzed": int(summary_row.get("positions_analyzed", len(portfolio))),
     }
+
+
+def _sma_portfolio_context(portfolio: pd.DataFrame) -> dict[str, float]:
+    if portfolio is None or portfolio.empty:
+        return {
+            "total_market_value": 0.0,
+            "total_unrealized_gain": 0.0,
+            "embedded_gain_pct": 0.0,
+            "current_weight": 0.0,
+            "target_weight": 0.0,
+            "excess_weight": 0.0,
+            "sale_to_target_gain": 0.0,
+            "sale_to_target_gain_pct_of_value": 0.0,
+        }
+    total_market_value = float(portfolio["market_value"].sum())
+    total_gain = float(portfolio["unrealized_gain"].sum())
+    sale_to_target_gain = 0.0
+    for _, row in portfolio.iterrows():
+        sale_to_target_gain += max(estimate_sale_tax(row, row.get("sale_fraction_to_target", 0.0))["realized_gain"], 0.0)
+    return {
+        "total_market_value": total_market_value,
+        "total_unrealized_gain": total_gain,
+        "embedded_gain_pct": total_gain / total_market_value if total_market_value else 0.0,
+        "current_weight": float(portfolio["current_weight"].sum()),
+        "target_weight": float(portfolio["target_weight"].sum()),
+        "excess_weight": max(float(portfolio["current_weight"].sum() - portfolio["target_weight"].sum()), 0.0),
+        "sale_to_target_gain": sale_to_target_gain,
+        "sale_to_target_gain_pct_of_value": sale_to_target_gain / total_market_value if total_market_value else 0.0,
+    }
+
+
+def _sma_hedge_context(long_short_table: pd.DataFrame | None) -> dict[str, Any]:
+    if long_short_table is None or long_short_table.empty or "hedge_type" not in long_short_table:
+        return {
+            "best_hedge_type": "No hedge evidence",
+            "best_hedge": "No proxy evidence available",
+            "best_volatility_reduction": 0.0,
+            "best_drawdown_impact": 0.0,
+            "best_tracking_error": 0.0,
+            "evidence_source": "No long/short evidence",
+        }
+    available = long_short_table[long_short_table["hedge_type"].astype(str) != "Data unavailable"].copy()
+    if available.empty:
+        return {
+            "best_hedge_type": "No hedge evidence",
+            "best_hedge": "No proxy evidence available",
+            "best_volatility_reduction": 0.0,
+            "best_drawdown_impact": 0.0,
+            "best_tracking_error": 0.0,
+            "evidence_source": "No long/short evidence",
+        }
+    top = available.sort_values("rank_score", ascending=False).iloc[0]
+    return {
+        "best_hedge_type": str(top.get("hedge_type", "")),
+        "best_hedge": str(top.get("proposed_hedge", "")),
+        "best_volatility_reduction": _coerce_decimal(top.get("volatility_reduction")),
+        "best_drawdown_impact": _coerce_decimal(top.get("maximum_drawdown_impact")),
+        "best_tracking_error": _coerce_decimal(top.get("tracking_error")),
+        "evidence_source": str(top.get("return_data_source", "summary proxy table")),
+    }
+
+
+def _weighted_sma_score(scores: dict[str, float], priorities: dict[str, float]) -> float:
+    total_weight = sum(max(float(value), 0.0) for value in priorities.values())
+    if total_weight <= 0:
+        return sum(scores.values()) / len(scores)
+    return sum(scores[key] * max(float(priorities.get(key, 0.0)), 0.0) for key in scores) / total_weight
+
+
+def evaluate_sma_designs(
+    portfolio: pd.DataFrame,
+    long_short_table: pd.DataFrame | None = None,
+    *,
+    priorities: dict[str, float] | None = None,
+    hedge_assumptions: dict[str, float] | None = None,
+) -> pd.DataFrame:
+    """Compare long/short SMA designs for concentrated-stock transition work.
+
+    Scores are educational and assumption-driven. The output is a due-diligence
+    starting point, not a manager selection or trade recommendation.
+    """
+    priorities = {**DEFAULT_SMA_STUDY_PRIORITIES, **(priorities or {})}
+    assumptions = {**DEFAULT_HEDGE_ASSUMPTIONS, **(hedge_assumptions or {})}
+    context = _sma_portfolio_context(portfolio)
+    hedge = _sma_hedge_context(long_short_table)
+    embedded_gain_score = _clamp(context["embedded_gain_pct"] * 100.0)
+    sale_gain_score = _clamp(context["sale_to_target_gain_pct_of_value"] * 140.0)
+    excess_score = _clamp(context["excess_weight"] * 100.0)
+    hedge_signal = _clamp((hedge["best_volatility_reduction"] + hedge["best_drawdown_impact"]) * 100.0)
+    borrow_cost_penalty = min(max(float(assumptions["annual_borrow_cost_rate"]), 0.0) * 500.0, 20.0)
+    tax_tolerance = _clamp(float(assumptions["tax_complexity_tolerance"]), 1.0, 5.0)
+    tax_tolerance_penalty = (5.0 - tax_tolerance) * 5.0
+
+    rows: list[dict[str, Any]] = []
+    for design in SMA_DESIGN_LIBRARY:
+        scores = dict(design["base_scores"])
+        design_id = str(design["design_id"])
+
+        if design_id == "conservative":
+            scores["tax_loss_capacity"] += embedded_gain_score * 0.08 + sale_gain_score * 0.08
+            scores["concentration_transition_fit"] += excess_score * 0.12
+            scores["risk_control"] += hedge_signal * 0.10
+        elif design_id == "balanced":
+            scores["tax_loss_capacity"] += embedded_gain_score * 0.14 + sale_gain_score * 0.16
+            scores["concentration_transition_fit"] += excess_score * 0.20
+            scores["risk_control"] += hedge_signal * 0.28
+            scores["liquidity_borrow_safety"] -= borrow_cost_penalty * 0.35
+        elif design_id == "hedge_focused":
+            scores["tax_loss_capacity"] += embedded_gain_score * 0.10 + sale_gain_score * 0.10
+            scores["concentration_transition_fit"] += excess_score * 0.32
+            scores["risk_control"] += hedge_signal * 0.48
+            scores["tax_rule_clarity"] -= tax_tolerance_penalty * 0.65
+            scores["liquidity_borrow_safety"] -= borrow_cost_penalty * 0.45
+        elif design_id == "aggressive":
+            scores["tax_loss_capacity"] += embedded_gain_score * 0.16 + sale_gain_score * 0.18
+            scores["concentration_transition_fit"] += excess_score * 0.08
+            scores["risk_control"] += hedge_signal * 0.15
+            scores["tax_rule_clarity"] -= tax_tolerance_penalty
+            scores["liquidity_borrow_safety"] -= borrow_cost_penalty * 0.65
+            scores["cost_efficiency"] -= borrow_cost_penalty * 0.50
+
+        scores = {key: _clamp(value) for key, value in scores.items()}
+        selection_score = _weighted_sma_score(scores, priorities)
+        rows.append(
+            {
+                "design_id": design_id,
+                "design": design["design"],
+                "description": design["description"],
+                "selection_score": selection_score,
+                "net_exposure": design["net_exposure"],
+                "gross_exposure": design["gross_exposure"],
+                "long_book": design["long_book"],
+                "short_book": design["short_book"],
+                "expected_loss_harvest_potential": design["expected_loss_harvest_potential"],
+                "estimated_fee_carry": design["estimated_fee_carry"],
+                "expected_tracking_error": design["expected_tracking_error"],
+                "tax_loss_capacity_score": scores["tax_loss_capacity"],
+                "concentration_transition_fit_score": scores["concentration_transition_fit"],
+                "risk_control_score": scores["risk_control"],
+                "tax_rule_clarity_score": scores["tax_rule_clarity"],
+                "implementation_simplicity_score": scores["implementation_simplicity"],
+                "liquidity_borrow_safety_score": scores["liquidity_borrow_safety"],
+                "cost_efficiency_score": scores["cost_efficiency"],
+                "manager_operational_quality_score": scores["manager_operational_quality"],
+                "diversification_benefit_score": scores["diversification_benefit"],
+                "implementation_complexity": design["implementation_complexity"],
+                "liquidity_borrow_risk": design["liquidity_borrow_risk"],
+                "tax_rule_risk": design["tax_rule_risk"],
+                "best_when": design["best_when"],
+                "avoid_when": design["avoid_when"],
+                "professional_review_flags": design["review_flags"],
+                "best_hedge_evidence": f"{hedge['best_hedge_type']} via {hedge['best_hedge']}",
+                "hedge_evidence_source": hedge["evidence_source"],
+                "portfolio_context": (
+                    f"Analyzed value ${context['total_market_value']:,.0f}; embedded gain "
+                    f"{context['embedded_gain_pct']:.1%}; excess weight {context['excess_weight']:.1%}; "
+                    f"sale-to-target gain ${context['sale_to_target_gain']:,.0f}."
+                ),
+            }
+        )
+
+    output = pd.DataFrame(rows).sort_values("selection_score", ascending=False).reset_index(drop=True)
+    output.insert(0, "rank", range(1, len(output) + 1))
+    if not output.empty:
+        top_design = str(output.iloc[0]["design"])
+        explanations = []
+        for index, row in output.iterrows():
+            if index == 0:
+                explanations.append(
+                    f"Selected for study because it has the strongest blended fit across tax-loss capacity, "
+                    f"concentration transition, risk control, implementation burden, liquidity/borrow safety, and tax-rule clarity."
+                )
+            else:
+                explanations.append(
+                    f"Ranks below {top_design} because the blended score gives less favorable tradeoffs for the current priorities."
+                )
+        output["why_selected_over_alternatives"] = explanations
+    return output
+
+
+def build_sma_due_diligence_checklist(selected_design: str | None = None) -> pd.DataFrame:
+    design_note = f" for {selected_design}" if selected_design else ""
+    rows = [
+        {
+            "Review Area": "Mandate fit",
+            "Question": f"Does the SMA mandate{design_note} explicitly support concentrated-stock transition rather than generic alpha?",
+            "Evidence Needed": "Investment policy statement, model portfolio ranges, benchmark, net/gross exposure limits.",
+        },
+        {
+            "Review Area": "Tax controls",
+            "Question": "Can the manager monitor wash sales, straddles, constructive-sale risk, and holding-period effects before trades?",
+            "Evidence Needed": "Tax-lot workflow, restricted-list process, CPA report sample, year-end tax package sample.",
+        },
+        {
+            "Review Area": "Hedge design",
+            "Question": "Are shorts diversified, liquid, borrowable, and clearly not a short-against-the-box substitute?",
+            "Evidence Needed": "Short-book policy, borrow-cost history, liquidity screens, restricted securities list.",
+        },
+        {
+            "Review Area": "Risk model",
+            "Question": "Does risk reporting show beta, sector/factor exposure, tracking error, drawdown, and stress behavior?",
+            "Evidence Needed": "Sample monthly report, factor exposure report, historical drawdown and turnover analysis.",
+        },
+        {
+            "Review Area": "Costs and conflicts",
+            "Question": "What all-in cost applies after advisory fee, platform/wrap fee, borrow, margin, trading, and embedded expenses?",
+            "Evidence Needed": "Form ADV/wrap brochure, fee schedule, trade-cost policy, soft-dollar/conflict disclosures.",
+        },
+        {
+            "Review Area": "Implementation gates",
+            "Question": "Who can approve launch, tax budget changes, restricted-list exceptions, and hedge exposure changes?",
+            "Evidence Needed": "Written approval workflow, stop-loss/stop-review rules, named owner for tax/legal signoff.",
+        },
+    ]
+    return pd.DataFrame(rows)
 
 
 def build_sensitivity_tables(

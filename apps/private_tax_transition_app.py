@@ -24,9 +24,12 @@ try:
     )
     from apps.tax_transition_engine import (
         DEFAULT_HEDGE_ASSUMPTIONS,
+        DEFAULT_SMA_STUDY_PRIORITIES,
         DEFAULT_STRATEGY_PRIORITIES,
+        build_sma_due_diligence_checklist,
         build_transition_plan_summary,
         build_sample_portfolio_from_cluster_summary,
+        evaluate_sma_designs,
         long_short_research_markdown,
         normalize_return_frame,
         normalize_portfolio_frame,
@@ -49,9 +52,12 @@ except ModuleNotFoundError:
     )
     from tax_transition_engine import (
         DEFAULT_HEDGE_ASSUMPTIONS,
+        DEFAULT_SMA_STUDY_PRIORITIES,
         DEFAULT_STRATEGY_PRIORITIES,
+        build_sma_due_diligence_checklist,
         build_transition_plan_summary,
         build_sample_portfolio_from_cluster_summary,
+        evaluate_sma_designs,
         long_short_research_markdown,
         normalize_return_frame,
         normalize_portfolio_frame,
@@ -1593,6 +1599,231 @@ def render_long_short_summary(long_short: pd.DataFrame) -> None:
     )
 
 
+def render_sma_study_controls(key_prefix: str) -> tuple[dict[str, float], dict[str, float]]:
+    with st.expander("SMA study assumptions", expanded=False):
+        st.caption("Higher priority means the SMA design score gives that criterion more influence.")
+        priority_columns = st.columns(3)
+        priorities: dict[str, float] = {}
+        for index, (key, default) in enumerate(DEFAULT_SMA_STUDY_PRIORITIES.items()):
+            priorities[key] = float(
+                priority_columns[index % 3].slider(
+                    key.replace("_", " ").title(),
+                    min_value=0,
+                    max_value=5,
+                    value=int(default),
+                    step=1,
+                    key=f"{key_prefix}_sma_priority_{key}",
+                )
+            )
+
+        st.caption("These assumptions affect borrow, liquidity, and tax-complexity tradeoffs in the SMA comparison.")
+        h1, h2, h3 = st.columns(3)
+        hedge_assumptions = {
+            "annual_borrow_cost_rate": float(
+                h1.number_input(
+                    "Annual borrow/carry cost",
+                    min_value=0.0,
+                    max_value=0.25,
+                    value=float(DEFAULT_HEDGE_ASSUMPTIONS["annual_borrow_cost_rate"]),
+                    step=0.0025,
+                    format="%.4f",
+                    key=f"{key_prefix}_sma_borrow_cost",
+                )
+            ),
+            "liquidity_requirement": float(
+                h2.slider(
+                    "Liquidity requirement",
+                    min_value=0,
+                    max_value=100,
+                    value=int(DEFAULT_HEDGE_ASSUMPTIONS["liquidity_requirement"]),
+                    step=5,
+                    key=f"{key_prefix}_sma_liquidity_requirement",
+                )
+            ),
+            "tax_complexity_tolerance": float(
+                h3.slider(
+                    "Tax complexity tolerance",
+                    min_value=1,
+                    max_value=5,
+                    value=int(DEFAULT_HEDGE_ASSUMPTIONS["tax_complexity_tolerance"]),
+                    step=1,
+                    key=f"{key_prefix}_sma_tax_complexity_tolerance",
+                )
+            ),
+        }
+    return priorities, hedge_assumptions
+
+
+def render_sma_study(
+    cluster_summary: pd.DataFrame,
+    risk: pd.DataFrame,
+    bundled_returns: pd.DataFrame | None = None,
+) -> None:
+    render_strategy_disclaimer()
+    st.subheader("Long/Short SMA Study")
+    st.caption(
+        "Compare conservative, balanced, hedge-focused, and aggressive long/short SMA designs as implementation candidates."
+    )
+    st.markdown(
+        """
+        <div class="decision-brief">
+        <strong>Study question:</strong> which diversified long/short SMA mandate best supports a taxable transition
+        from concentrated stock into broader equity exposure?<br>
+        <strong>Use this screen for:</strong> comparing mandate designs, framing manager diligence, and identifying
+        tax/legal review questions before any implementation decision.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    sma_priorities, hedge_assumptions = render_sma_study_controls("sma_study")
+    with st.expander("Portfolio input used for SMA study", expanded=False):
+        raw_portfolio = render_portfolio_input(cluster_summary, "sma_study", show_help=False)
+    with st.expander("Optional return data used for hedge evidence", expanded=False):
+        daily_returns = render_return_data_input(
+            bundled_returns,
+            "sma_study",
+            return_universe_from_portfolio(raw_portfolio, risk),
+        )
+
+    normalized_preview = normalize_portfolio_frame(raw_portfolio)
+    if normalized_preview.empty:
+        st.warning("Enter at least one ticker with a market value or shares and price.")
+        return
+
+    results = run_transition_analysis(
+        raw_portfolio,
+        risk,
+        daily_returns=daily_returns,
+        hedge_assumptions=hedge_assumptions,
+    )
+    portfolio = results["portfolio"]
+    comparison = evaluate_sma_designs(
+        portfolio,
+        results["long_short_table"],
+        priorities=sma_priorities,
+        hedge_assumptions=hedge_assumptions,
+    )
+    if comparison.empty:
+        st.info("No SMA design comparison is available for the selected inputs.")
+        return
+
+    top = comparison.iloc[0]
+    portfolio_summary = results["portfolio_summary"].iloc[0]
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Study selection", str(top["design"]).replace(" SMA", ""))
+    c2.metric("Selection score", format_number(top["selection_score"], 1))
+    c3.metric("Excess weight", format_pct(portfolio_summary["excess_weight"]))
+    c4.metric("Embedded gain", format_dollars(portfolio_summary["total_unrealized_gain"]))
+
+    st.subheader("Side-by-Side Design Comparison")
+    st.caption("Scores are 0-100 educational fit scores. Higher is better except explicit risk and complexity columns.")
+    render_static_table(
+        comparison,
+        [
+            "rank",
+            "design",
+            "selection_score",
+            "net_exposure",
+            "gross_exposure",
+            "expected_loss_harvest_potential",
+            "expected_tracking_error",
+            "tax_loss_capacity_score",
+            "concentration_transition_fit_score",
+            "risk_control_score",
+            "tax_rule_clarity_score",
+            "implementation_complexity",
+            "liquidity_borrow_risk",
+            "tax_rule_risk",
+        ],
+        {
+            "rank": "Rank",
+            "design": "Design",
+            "selection_score": "Score",
+            "net_exposure": "Net Exposure",
+            "gross_exposure": "Gross Exposure",
+            "expected_loss_harvest_potential": "Loss-Harvest Potential",
+            "expected_tracking_error": "Tracking Error",
+            "tax_loss_capacity_score": "Tax-Loss Capacity",
+            "concentration_transition_fit_score": "Transition Fit",
+            "risk_control_score": "Risk Control",
+            "tax_rule_clarity_score": "Tax-Rule Clarity",
+            "implementation_complexity": "Complexity Risk",
+            "liquidity_borrow_risk": "Liquidity/Borrow Risk",
+            "tax_rule_risk": "Tax-Rule Risk",
+        },
+        {
+            "rank": lambda x: format_number(x, 0),
+            "selection_score": lambda x: format_number(x, 1),
+            "tax_loss_capacity_score": lambda x: format_number(x, 1),
+            "concentration_transition_fit_score": lambda x: format_number(x, 1),
+            "risk_control_score": lambda x: format_number(x, 1),
+            "tax_rule_clarity_score": lambda x: format_number(x, 1),
+            "implementation_complexity": lambda x: format_number(x, 1),
+            "liquidity_borrow_risk": lambda x: format_number(x, 1),
+            "tax_rule_risk": lambda x: format_number(x, 1),
+        },
+    )
+
+    with st.expander("Mandate architecture", expanded=True):
+        render_static_table(
+            comparison,
+            [
+                "design",
+                "description",
+                "long_book",
+                "short_book",
+                "estimated_fee_carry",
+                "best_hedge_evidence",
+                "hedge_evidence_source",
+            ],
+            {
+                "design": "Design",
+                "description": "Mandate",
+                "long_book": "Long Book",
+                "short_book": "Short Book",
+                "estimated_fee_carry": "Cost / Carry",
+                "best_hedge_evidence": "Hedge Evidence",
+                "hedge_evidence_source": "Evidence Source",
+            },
+        )
+
+    st.subheader("How To Choose")
+    decision_rows = comparison.loc[
+        :,
+        [
+            "design",
+            "why_selected_over_alternatives",
+            "best_when",
+            "avoid_when",
+            "professional_review_flags",
+        ],
+    ]
+    render_static_table(
+        decision_rows,
+        list(decision_rows.columns),
+        {
+            "design": "Design",
+            "why_selected_over_alternatives": "Model Rationale",
+            "best_when": "Best When",
+            "avoid_when": "Avoid When",
+            "professional_review_flags": "Professional Review Flags",
+        },
+    )
+
+    st.subheader("Manager Due Diligence Checklist")
+    checklist = build_sma_due_diligence_checklist(str(top["design"]))
+    render_static_table(
+        checklist,
+        ["Review Area", "Question", "Evidence Needed"],
+        {
+            "Review Area": "Review Area",
+            "Question": "Question",
+            "Evidence Needed": "Evidence Needed",
+        },
+    )
+
+
 def default_completion_window(strategy: str, transition_years: int) -> str:
     strategy_lower = strategy.lower()
     if "gradually" in strategy_lower:
@@ -2227,6 +2458,7 @@ def main() -> None:
     tabs = [
         "Overview",
         "Strategy Lab",
+        "SMA Study",
         "Transition Plan",
         "Tax Scenarios",
         "Long/Short Detail",
@@ -2244,6 +2476,8 @@ def main() -> None:
                 render_overview(rec, cluster_summary, bucket_summary, risk_weights, lots)
             elif label == "Strategy Lab":
                 render_strategy_lab(cluster_summary, risk, bundled_returns)
+            elif label == "SMA Study":
+                render_sma_study(cluster_summary, risk, bundled_returns)
             elif label == "Transition Plan":
                 render_transition_plan_builder(cluster_summary, risk, bundled_returns)
             elif label == "Tax Scenarios":

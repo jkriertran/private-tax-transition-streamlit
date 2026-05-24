@@ -50,6 +50,19 @@ The app intentionally labels the former factor placeholder as a multi-proxy hedg
 
 If daily return histories and suitable libraries are later added, the framework can be extended to compare rolling beta/correlation regimes and optional Markov or Hidden Markov Models. Those more advanced methods should be used only if they improve out-of-sample hedge behavior after taxes, borrow, costs, and implementation constraints. The regime-aware overlay is displayed as a policy framework; its headline beta, correlation, tracking-error, and drawdown metrics come from the highest-ranked base hedge unless a separately validated dynamic trading rule is added.
 
+## Long/Short SMA Study Logic
+
+The SMA Study tab compares four implementation designs side by side:
+
+- Conservative tax-aware equity SMA: broad long-only or mostly long direct-indexing style portfolio with a tightly governed hedge sleeve.
+- Balanced diversified 130/30-150/50 SMA: diversified tax-aware long/short portfolio intended to balance loss-harvesting capacity, concentration transition, and implementability.
+- Hedge-focused transition overlay: a targeted overlay around the concentrated position while the legacy position is sold, donated, or otherwise reduced over time.
+- Aggressive market/factor-neutral long/short SMA: high-gross active long/short mandate where alpha, factor neutrality, and harvest capacity are primary objectives.
+
+The SMA comparison uses separate criteria from the sale/hold strategy engine: tax-loss capacity, concentration-transition fit, risk control, tax-rule clarity, implementation simplicity, liquidity/borrow safety, cost efficiency, manager operational quality, and diversification benefit. The model adjusts the fit scores using the analyzed portfolio's embedded gain, excess concentration, sale-to-target gain, and available long/short hedge evidence.
+
+The output is meant to frame manager due diligence, not to select a manager automatically. A balanced diversified SMA may rank highest when the account has large embedded gain and significant excess concentration because it provides a broader implementation path than a single hedge and more tax-loss potential than a conservative direct-indexing sleeve. A conservative design can rank highest when the user's priorities heavily favor tax-rule clarity, simplicity, liquidity, and cost. A hedge-focused overlay can fit near-term concentration control but carries higher constructive-sale, straddle, wash-sale, short-against-the-box, and restricted-list review needs. An aggressive design requires the strongest manager diligence because its high gross exposure can create substantial tracking, borrow, margin, tax, and operational risk.
+
 ## Scenario and Assumption Controls
 
 The Strategy Lab exposes user-adjustable priority weights, gradual-sale horizon, decision horizon, available loss offsets, charitable-intent flag, annual borrow/carry cost, liquidity requirement, and tax-complexity tolerance.
