@@ -1,0 +1,7 @@
+symbol,risk_bucket,risk_role,return_proxy,lots,long_term_lots,market_value,cost_basis,unrealized_gain,zero_basis_lots,basis_ratio,embedded_gain_pct_of_mv,account_market_value_weight,cluster_market_value_weight,tax_transition_scope
+SNDK,Memory/storage,Legacy memory/storage concentration,SNDK,19,19,3676023.33,29501.54,3646521.79,7,0.008025395203354165,0.9919746047966458,0.42462673591745714,0.4535242159241885,Primary tax-transition focus
+WDC,Memory/storage,Legacy memory/storage concentration,WDC,15,15,3466476.24,53680.87,3412795.37,7,0.015485716988500113,0.9845142830114999,0.40042142249587404,0.4276716379723926,Primary tax-transition focus
+STX,Storage peer,Storage peer concentration,STX,1,1,456754.26,0.0,456754.26,1,0.0,1.0,0.0527608377665529,0.056351415385748636,Cluster risk/restriction review
+MU,Memory peer,DRAM/memory peer concentration,MU,1,1,375500.0,9999.94,365500.06,0,0.02663099866844208,0.9733690013315579,0.043374953046613325,0.046326785167474106,Cluster risk/restriction review
+INTC,Semiconductor,Semiconductor factor exposure,SOXX,3,3,127150.23999999999,21342.940000000002,105807.3,0,0.1678560732563305,0.8321439267436697,0.014687445245980332,0.015686982296864906,Cluster risk/restriction review
+SMCI,AI hardware,AI server/hardware factor exposure,SOXX,1,1,3558.0,3739.95,-181.95,0,1.0511382799325464,-0.05113827993254637,0.00041099356308881544,0.0004389632533312194,Cluster risk/restriction review

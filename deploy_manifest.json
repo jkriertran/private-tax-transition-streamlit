@@ -1,0 +1,110 @@
+{
+  "package": "private_tax_transition_streamlit",
+  "purpose": "read-only email-gated Streamlit deployment package",
+  "main_file_path": "apps/private_tax_transition_app.py",
+  "access_mode": "streamlit_private",
+  "advisor_view_default": false,
+  "included_files": [
+    {
+      "path": ".gitignore",
+      "size_bytes": 319,
+      "sha256": "b37e003f1c454195af2345de23fafd068078ed6bac04c9001043459d370d943c"
+    },
+    {
+      "path": ".streamlit/config.toml",
+      "size_bytes": 61,
+      "sha256": "4e3eb918d3de165e96dede36a01fc46c94e34c08f523d613258f9d22b0ef9499"
+    },
+    {
+      "path": ".streamlit/secrets.toml.example",
+      "size_bytes": 71,
+      "sha256": "04bf855f01f2c9eb481f3f0cae5678d7aa38441f659d79482c2eba2b3a0788db"
+    },
+    {
+      "path": "README.md",
+      "size_bytes": 1277,
+      "sha256": "a20ccd842e785d9f66de4017f80a18c7d7de05bfb919e16297ec7cabf22a4b5e"
+    },
+    {
+      "path": "analysis_output/tax_transition_model/candidate_long_short_strategies.csv",
+      "size_bytes": 2673,
+      "sha256": "f3481dc510b9683a8678c32bd3933ee3c9880f54a84e0d57c35832f02a5b6d5d"
+    },
+    {
+      "path": "analysis_output/tax_transition_model/charts/overlay_loss_capacity.svg",
+      "size_bytes": 3133,
+      "sha256": "0fba43d17b8fd3a04bac997e7332e7ee20188c8e279c0e3171b40002590810e0"
+    },
+    {
+      "path": "analysis_output/tax_transition_model/charts/semiconductor_cluster_basis_exposure.svg",
+      "size_bytes": 3450,
+      "sha256": "c6d85bdc5b184416272e1b8ca21b0f50c4eccedad2e26dfc8bca514479342f6d"
+    },
+    {
+      "path": "analysis_output/tax_transition_model/charts/transition_tax_by_sale_pct.svg",
+      "size_bytes": 3144,
+      "sha256": "9293e99a168d5f47f04cca8009d3455094364c05b5d24ad1bc03351a022b49c7"
+    },
+    {
+      "path": "analysis_output/tax_transition_model/cluster_exposure_summary.csv",
+      "size_bytes": 1420,
+      "sha256": "5e3179d81593dc78cc142d7a3595259559b085121641b3a201aa0006636a272c"
+    },
+    {
+      "path": "analysis_output/tax_transition_model/cluster_risk_bucket_summary.csv",
+      "size_bytes": 726,
+      "sha256": "62d08ee9139839ad2f15fb9187ab900ff414dd5f828c7d32a1cb329cb888f966"
+    },
+    {
+      "path": "analysis_output/tax_transition_model/cluster_risk_weights.csv",
+      "size_bytes": 1236,
+      "sha256": "74d8af7d1907b01afc7a2e9b9564798519f096286189db2bcf5b43c76c7f9c10"
+    },
+    {
+      "path": "analysis_output/tax_transition_model/overlay_economics.csv",
+      "size_bytes": 8555,
+      "sha256": "9d50963b2341b988f99a1e99c444a119d147ee6afd26f78522ecd0a9946d09db"
+    },
+    {
+      "path": "analysis_output/tax_transition_model/overlay_loss_capacity.csv",
+      "size_bytes": 2851,
+      "sha256": "0ccfb0eaa5c77cc300c7783179472533c3af3c1b381d8a75cad59924587b5d24"
+    },
+    {
+      "path": "analysis_output/tax_transition_model/risk_proxy_correlation.csv",
+      "size_bytes": 4054,
+      "sha256": "137d362f540170d7d2611b5191f4a7a3aec5907e67d6c376dab7246ff57bee29"
+    },
+    {
+      "path": "analysis_output/tax_transition_model/schwab_lot_total_reconciliation.csv",
+      "size_bytes": 1041,
+      "sha256": "d023625b72ec164dcfc1b3ae0b16603d6e33cdf30828a1ce4303770b3adf847b"
+    },
+    {
+      "path": "analysis_output/tax_transition_model/transition_tax_scenarios.csv",
+      "size_bytes": 27900,
+      "sha256": "e0da26bfa1ea679be600d1a0582532ddb1fd01adacaca637740c79a33c22689e"
+    },
+    {
+      "path": "apps/private_tax_transition_app.py",
+      "size_bytes": 33589,
+      "sha256": "f54f4a5d19405004abab85c77013266f3765aeba55fe6de8db96cc0d3f1136fa"
+    },
+    {
+      "path": "requirements.txt",
+      "size_bytes": 28,
+      "sha256": "2e2a554b0568fde1a772276864478a853ba24d0a2e1f15b403cfb1359f639f49"
+    }
+  ],
+  "excluded_sensitive_outputs": [
+    "normalized_lots_used.csv",
+    "semiconductor_cluster_tax_lot_exposure.csv",
+    "sndk_wdc_tax_lot_exposure.csv",
+    "sale_lot_schedule.csv",
+    "sndk_wdc_sale_lot_schedule.csv",
+    "sndk_wdc_transition_tax_scenarios.csv",
+    "manifest.json",
+    "private_streamlit_app_cluster_smoke.png",
+    "private_streamlit_app_smoke.png"
+  ]
+}

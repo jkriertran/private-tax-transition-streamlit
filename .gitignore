@@ -1,0 +1,17 @@
+# Never commit real local or cloud secrets.
+.streamlit/secrets.toml
+.env
+
+# Keep raw broker/source files out of the deployment repo.
+Stock Basis/
+data/
+Lot-Details-*.csv
+schwab_lot_details_*.csv
+normalized_lots_used.csv
+sale_lot_schedule.csv
+*_sale_lot_schedule.csv
+*_tax_lot_exposure.csv
+
+__pycache__/
+*.pyc
+.DS_Store
