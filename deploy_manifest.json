@@ -111,6 +111,11 @@
       "sha256": "5bf9c1409436cb8ab6f627778d0d546ca9737d19dec8a5818d6579c87b0bd9fd"
     },
     {
+      "path": "LONG_SHORT_BACKTEST_GOAL_HANDOFF.md",
+      "size_bytes": 13194,
+      "sha256": "90f8a5aeb6a6073cb73c1c2315b4a0b2d78942907d26e4c23abb688a83041666"
+    },
+    {
       "path": "requirements.txt",
       "size_bytes": 28,
       "sha256": "2e2a554b0568fde1a772276864478a853ba24d0a2e1f15b403cfb1359f639f49"
